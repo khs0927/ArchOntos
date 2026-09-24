@@ -6,6 +6,14 @@ from archontos.rules.compiler import (
     compile_requirement,
 )
 from archontos.rules.engine import RuleEvaluationError, evaluate_expr, evaluate_rule
+from archontos.rules.evaluation import (
+    CanonicalEvaluationError,
+    CanonicalEvaluationRepository,
+    PersistedEvaluation,
+    RuleNotExecutableError,
+    RuleVersionNotFoundError,
+)
+from archontos.rules.evaluation_service import CanonicalEvaluationService
 from archontos.rules.persistence import (
     AssertionNotApprovedError,
     CanonicalRuleCompilerRepository,
@@ -17,14 +25,20 @@ from archontos.rules.service import RuleCompilationService
 
 __all__ = [
     "AssertionNotApprovedError",
+    "CanonicalEvaluationError",
+    "CanonicalEvaluationRepository",
+    "CanonicalEvaluationService",
     "CanonicalRuleCompilerRepository",
     "CompiledRule",
     "PersistedCompiledRule",
+    "PersistedEvaluation",
     "RequirementSpec",
     "RuleAssertionNotFoundError",
     "RuleCompilationError",
     "RuleCompilationService",
     "RuleEvaluationError",
+    "RuleNotExecutableError",
+    "RuleVersionNotFoundError",
     "RulePersistenceError",
     "authority_from_document_type",
     "compile_requirement",
