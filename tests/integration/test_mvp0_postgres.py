@@ -240,6 +240,7 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             evidence = await queries.source_evidence(compiled.rule_version_id)
             authority = await queries.authority(compiled.rule_version_id)
             applicability = await queries.applicability(compiled.rule_version_id)
+            provenance = await queries.decision_provenance(evaluation.decision_id)
             jurisdiction = await queries.jurisdiction_comparison(
                 rule_title="직통계단 수",
                 left_jurisdiction="KR",
@@ -251,6 +252,10 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             assert authority.authority_class == "statutory"
             assert authority.document_type == "statute"
             assert applicability.entries[0].jurisdiction_code == "KR"
+            assert provenance.decision_id == evaluation.decision_id
+            assert provenance.evaluation_id == evaluation.evaluation_id
+            assert provenance.outcome == "FAIL"
+            assert provenance.source_evidence.evidence[0].evidence_id == evidence_id
             assert jurisdiction.left is not None
             assert jurisdiction.right is not None
             assert jurisdiction.same_logic is True
