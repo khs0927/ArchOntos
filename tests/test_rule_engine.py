@@ -58,3 +58,18 @@ def test_unknown_operator_fails_closed():
         assert "Unsupported" in str(exc)
     else:
         raise AssertionError("unsupported operator must fail closed")
+
+
+def test_missing_required_fact_routes_to_review():
+    rule = {
+        "applicability": {"jurisdiction": ["KR"]},
+        "rule": {
+            "if": {">=": [{"var": "stair.direct_count"}, 2]},
+            "then": {"PASS": {"reason": "ok"}},
+            "else": {"FAIL": {"reason": "too few"}},
+        },
+    }
+    result = evaluate_rule(rule, {"context": {"jurisdiction": "KR"}})
+    assert result.applicable is True
+    assert result.outcome is DecisionOutcome.REVIEW
+    assert result.reason == "Insufficient facts to evaluate rule"
