@@ -321,7 +321,26 @@ class CanonicalLawRepository:
                 },
             )
 
+        if previous_row is not None:
+            previous_effective_to = effective_from - timedelta(days=1)
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE rule_version rv
+                    SET valid_to = :valid_to
+                    FROM rule r
+                    WHERE r.id = rv.rule_id
+                      AND r.source_version_id = :source_version_id
+                    """
+                ),
+                {
+                    "source_version_id": previous_row.id,
+                    "valid_to": previous_effective_to,
+                },
+            )
+
         if next_row is not None:
+            current_effective_to = next_row.effective_from - timedelta(days=1)
             await self.session.execute(
                 text(
                     """
@@ -333,8 +352,23 @@ class CanonicalLawRepository:
                 ),
                 {
                     "source_version_id": source_version_id,
-                    "effective_to": next_row.effective_from - timedelta(days=1),
+                    "effective_to": current_effective_to,
                     "superseded_by": next_row.id,
+                },
+            )
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE rule_version rv
+                    SET valid_to = :valid_to
+                    FROM rule r
+                    WHERE r.id = rv.rule_id
+                      AND r.source_version_id = :source_version_id
+                    """
+                ),
+                {
+                    "source_version_id": source_version_id,
+                    "valid_to": current_effective_to,
                 },
             )
 
