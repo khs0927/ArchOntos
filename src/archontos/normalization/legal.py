@@ -51,28 +51,59 @@ def _text_hash(value: str | None) -> str | None:
 
 
 def _locator_key(locator: dict[str, Any]) -> str:
-    identity = {
-        key: locator.get(key)
-        for key in (
-            "kind",
-            "article_index",
-            "article_no",
-            "article_branch_no",
-            "paragraph_index",
-            "paragraph_no",
-            "subparagraph_index",
-            "subparagraph_no",
-            "item_index",
-            "item_no",
-            "addendum_index",
-            "addendum_promulgation_date",
-            "addendum_promulgation_no",
-            "attachment_index",
-            "attachment_no",
-            "attachment_branch_no",
-        )
-        if locator.get(key) not in (None, "")
-    }
+    identity: dict[str, Any] = {"kind": locator["kind"]}
+
+    article_no = locator.get("article_no")
+    if article_no not in (None, ""):
+        identity["article_no"] = article_no
+        branch_no = locator.get("article_branch_no")
+        if branch_no not in (None, ""):
+            identity["article_branch_no"] = branch_no
+    elif locator.get("article_index") not in (None, ""):
+        identity["article_index"] = locator["article_index"]
+
+    paragraph_no = locator.get("paragraph_no")
+    if paragraph_no not in (None, ""):
+        identity["paragraph_no"] = paragraph_no
+    elif locator.get("paragraph_index") not in (None, ""):
+        identity["paragraph_index"] = locator["paragraph_index"]
+
+    subparagraph_no = locator.get("subparagraph_no")
+    if subparagraph_no not in (None, ""):
+        identity["subparagraph_no"] = subparagraph_no
+    elif locator.get("subparagraph_index") not in (None, ""):
+        identity["subparagraph_index"] = locator["subparagraph_index"]
+
+    item_no = locator.get("item_no")
+    if item_no not in (None, ""):
+        identity["item_no"] = item_no
+    elif locator.get("item_index") not in (None, ""):
+        identity["item_index"] = locator["item_index"]
+
+    if locator["kind"] == "addendum":
+        promulgation_date = locator.get("addendum_promulgation_date")
+        promulgation_no = locator.get("addendum_promulgation_no")
+        if promulgation_date not in (None, ""):
+            identity["addendum_promulgation_date"] = promulgation_date
+        if promulgation_no not in (None, ""):
+            identity["addendum_promulgation_no"] = promulgation_no
+        if (
+            promulgation_date in (None, "")
+            and promulgation_no in (None, "")
+            and locator.get("addendum_index") not in (None, "")
+        ):
+            identity["addendum_index"] = locator["addendum_index"]
+
+    if locator["kind"] == "attachment":
+        attachment_no = locator.get("attachment_no")
+        if attachment_no not in (None, ""):
+            identity["attachment_no"] = attachment_no
+            branch_no = locator.get("attachment_branch_no")
+            if branch_no not in (None, ""):
+                identity["attachment_branch_no"] = branch_no
+        elif locator.get("attachment_index") not in (None, ""):
+            identity["attachment_index"] = locator["attachment_index"]
+
     digest = hashlib.sha256(
         json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
@@ -80,7 +111,6 @@ def _locator_key(locator: dict[str, Any]) -> str:
     ).hexdigest()[:20]
     kind = str(locator["kind"])
     return f"lawgo:{kind}:{digest}"
-
 
 @dataclass(frozen=True, slots=True)
 class LegalEvidenceUnit:
