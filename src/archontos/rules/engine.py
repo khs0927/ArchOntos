@@ -43,7 +43,7 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
         return {key: evaluate_expr(value, facts) for key, value in expr.items()}
 
     op, args = next(iter(expr.items()))
-    if op == "var":
+    if op in {"var", "literal"}:
         return _resolve(expr, facts)
 
     args_list = args if isinstance(args, list) else [args]

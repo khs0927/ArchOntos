@@ -238,6 +238,27 @@ class CanonicalAssertionRepository:
             },
         )
 
+        linked_rule_status = (
+            "active" if decision is ReviewStatus.APPROVED else "suspended"
+        )
+        await self.session.execute(
+            text(
+                """
+                UPDATE rule_version rv
+                SET status = :rule_status
+                FROM rule_assertion ra
+                WHERE ra.rule_version_id = rv.id
+                  AND ra.assertion_id = :assertion_id
+                  AND ra.role = 'basis'
+                  AND rv.status <> 'retired'
+                """
+            ),
+            {
+                "assertion_id": assertion_id,
+                "rule_status": linked_rule_status,
+            },
+        )
+
         event_type = {
             ReviewStatus.APPROVED: "AssertionApproved",
             ReviewStatus.REJECTED: "AssertionRejected",
@@ -259,6 +280,7 @@ class CanonicalAssertionRepository:
                 "previous_status": previous.value,
                 "review_status": decision.value,
                 "reviewer_id": reviewer_id,
+                "linked_rule_status": linked_rule_status,
             },
         )
 

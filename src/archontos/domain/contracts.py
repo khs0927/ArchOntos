@@ -54,6 +54,7 @@ class RuleVersionContract(BaseModel):
     valid_to: date | None = None
     authority_class: AuthorityClass
     binding: bool = True
+    status: Literal["draft", "active", "suspended", "retired"] = "active"
 
     @model_validator(mode="after")
     def validate_interval(self):
