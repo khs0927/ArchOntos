@@ -123,7 +123,10 @@ def _matches_scope(applicability: dict[str, Any], facts: dict[str, Any]) -> bool
             return False
 
     conditions = applicability.get("conditions") or []
-    return all(bool(evaluate_expr(condition, facts)) for condition in conditions)
+    condition_values = [evaluate_expr(condition, facts) for condition in conditions]
+    if any(value is None for value in condition_values):
+        raise MissingRuleFactError("missing applicability condition fact")
+    return all(bool(value) for value in condition_values)
 
 
 def evaluate_rule(rule_document: dict[str, Any], facts: dict[str, Any]) -> RuleEvaluationResult:
@@ -145,15 +148,23 @@ def evaluate_rule(rule_document: dict[str, Any], facts: dict[str, Any]) -> RuleE
         )
 
     working_facts = deepcopy(facts)
-    for exception in doc.get("exceptions", []):
-        condition = exception.get("condition")
-        if condition and evaluate_expr(condition, working_facts):
-            for dotted_key, value in (exception.get("override") or {}).items():
-                target = working_facts
-                parts = dotted_key.split(".")
-                for part in parts[:-1]:
-                    target = target.setdefault(part, {})
-                target[parts[-1]] = value
+    try:
+        for exception in doc.get("exceptions", []):
+            condition = exception.get("condition")
+            if condition and evaluate_expr(condition, working_facts):
+                for dotted_key, value in (exception.get("override") or {}).items():
+                    target = working_facts
+                    parts = dotted_key.split(".")
+                    for part in parts[:-1]:
+                        target = target.setdefault(part, {})
+                    target[parts[-1]] = value
+    except MissingRuleFactError as exc:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Insufficient facts to evaluate rule exceptions",
+            details={"error": str(exc)},
+        )
 
     body = doc.get("rule", doc)
     condition = body.get("if")
