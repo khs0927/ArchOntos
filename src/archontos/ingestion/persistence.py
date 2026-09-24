@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -218,6 +219,83 @@ class CanonicalLawRepository:
             )
 
         source_version_id: UUID = row[0]
+
+        previous_result = await self.session.execute(
+            text(
+                """
+                SELECT id, effective_from
+                FROM source_version
+                WHERE source_id = :source_id
+                  AND id <> :source_version_id
+                  AND effective_from < :effective_from
+                ORDER BY effective_from DESC
+                LIMIT 1
+                FOR UPDATE
+                """
+            ),
+            {
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+                "effective_from": effective_from,
+            },
+        )
+        previous_row = previous_result.first()
+
+        next_result = await self.session.execute(
+            text(
+                """
+                SELECT id, effective_from
+                FROM source_version
+                WHERE source_id = :source_id
+                  AND id <> :source_version_id
+                  AND effective_from > :effective_from
+                ORDER BY effective_from ASC
+                LIMIT 1
+                FOR UPDATE
+                """
+            ),
+            {
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+                "effective_from": effective_from,
+            },
+        )
+        next_row = next_result.first()
+
+        if previous_row is not None:
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE source_version
+                    SET effective_to = :effective_to,
+                        superseded_by = :superseded_by
+                    WHERE id = :previous_id
+                    """
+                ),
+                {
+                    "previous_id": previous_row.id,
+                    "effective_to": effective_from - timedelta(days=1),
+                    "superseded_by": source_version_id,
+                },
+            )
+
+        if next_row is not None:
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE source_version
+                    SET effective_to = :effective_to,
+                        superseded_by = :superseded_by
+                    WHERE id = :source_version_id
+                    """
+                ),
+                {
+                    "source_version_id": source_version_id,
+                    "effective_to": next_row.effective_from - timedelta(days=1),
+                    "superseded_by": next_row.id,
+                },
+            )
+
         event_payload = {
             "source_id": str(source_id),
             "source_version_id": str(source_version_id),
