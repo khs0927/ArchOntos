@@ -1,4 +1,5 @@
 import os
+from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,8 +11,16 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from archontos.assertions.contracts import AssertionCandidateCreate
 from archontos.assertions.persistence import CanonicalAssertionRepository
 from archontos.domain.enums import ReviewStatus
+from archontos.ingestion.adapters import (
+    LawGoKrAdapter,
+    LawSearchItem,
+    RawSourceEnvelope,
+)
+from archontos.ingestion.persistence import CanonicalLawRepository
+from archontos.normalization.worker import NormalizationOutboxWorker
 from archontos.query.persistence import CanonicalQueryRepository
 from archontos.rules.persistence import CanonicalRuleCompilerRepository
+from archontos.storage.artifacts import LocalArtifactStore
 
 
 def _test_dsn() -> str | None:
@@ -25,8 +34,96 @@ def _sqlalchemy_url(dsn: str) -> str:
     return dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
+def _body_payload(*, mst: str, enforcement_date: str, required_count: int):
+    return {
+        "법령": {
+            "법령키": mst,
+            "기본정보": {
+                "법령명_한글": "테스트 건축법",
+                "법령ID": "001823",
+                "법령일련번호": mst,
+                "법종구분": {"content": "법률"},
+                "소관부처": {"content": "국토교통부"},
+                "공포일자": "20260101",
+                "시행일자": enforcement_date,
+            },
+            "조문": {
+                "조문단위": {
+                    "조문번호": "10",
+                    "조문제목": "직통계단",
+                    "조문내용": "직통계단 설치기준",
+                    "항": {
+                        "항번호": "1",
+                        "항내용": "직통계단 수에 관한 기준",
+                        "호": {
+                            "호번호": "1",
+                            "호내용": f"직통계단을 {required_count}개소 이상 설치한다.",
+                        },
+                    },
+                }
+            },
+            "부칙": {"부칙단위": {"부칙공포일자": "20260101", "부칙내용": "부칙"}},
+            "별표": {
+                "별표단위": {
+                    "별표번호": "1",
+                    "별표제목": "테스트 별표",
+                    "별표서식PDF파일링크": "/LSW/flDownload.do?flSeq=123",
+                }
+            },
+        }
+    }
+
+
+def _law_item(*, mst: str, enforcement_date: date) -> LawSearchItem:
+    return LawSearchItem(
+        law_name="테스트 건축법",
+        law_id="001823",
+        mst=mst,
+        law_type="법률",
+        ministry="국토교통부",
+        promulgation_date=date(2026, 1, 1),
+        promulgation_number="21000",
+        enforcement_date=enforcement_date,
+        revision_type="일부개정",
+        history_code="현행",
+        detail_link=f"/DRF/lawService.do?target=law&MST={mst}",
+    )
+
+
+async def _persist_version(
+    *,
+    session_factory,
+    store: LocalArtifactStore,
+    mst: str,
+    enforcement_date: date,
+    required_count: int,
+):
+    envelope = RawSourceEnvelope(
+        source_name="law.go.kr",
+        endpoint="https://www.law.go.kr/DRF/lawService.do",
+        params={"target": "law", "MST": mst, "ID": "001823"},
+        payload=_body_payload(
+            mst=mst,
+            enforcement_date=enforcement_date.strftime("%Y%m%d"),
+            required_count=required_count,
+        ),
+        fetched_at=datetime.now(timezone.utc),
+    )
+    artifact = await store.put_envelope(envelope)
+    body = LawGoKrAdapter.parse_body(envelope)
+    item = _law_item(mst=mst, enforcement_date=enforcement_date)
+
+    async with session_factory() as session:
+        async with session.begin():
+            return await CanonicalLawRepository(session).persist_law_version(
+                item=item,
+                body=body,
+                body_artifact=artifact,
+            )
+
+
 @pytest.mark.asyncio
-async def test_postgres_mvp0_golden_path():
+async def test_postgres_mvp0_golden_path(tmp_path):
     dsn = _test_dsn()
     if not dsn:
         pytest.skip("ARCHONTOS_TEST_DATABASE_URL is not configured")
@@ -44,96 +141,43 @@ async def test_postgres_mvp0_golden_path():
 
         engine = create_async_engine(
             _sqlalchemy_url(dsn),
-            connect_args={
-                "server_settings": {
-                    "search_path": f"{schema},public",
-                }
-            },
+            connect_args={"server_settings": {"search_path": f"{schema},public"}},
         )
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        store = LocalArtifactStore(tmp_path / "artifacts")
+
+        v1 = await _persist_version(
+            session_factory=session_factory,
+            store=store,
+            mst="999001",
+            enforcement_date=date(2026, 1, 1),
+            required_count=2,
+        )
+        assert v1.created is True
+
+        first_work = await NormalizationOutboxWorker(
+            session_factory=session_factory,
+            artifact_store=store,
+        ).process_one()
+        assert first_work is not None
+        assert first_work.status == "published"
+        assert first_work.evidence_count >= 4
 
         async with session_factory() as session:
-            async with session.begin():
-                source_id = (
-                    await session.execute(
-                        text(
-                            """
-                            INSERT INTO source_document(
-                                source_key, title, issuer, jurisdiction_code,
-                                document_type, source_url
-                            )
-                            VALUES (
-                                'lawgo:law:test-building-act',
-                                '테스트 건축법', '국토교통부', 'KR',
-                                'statute', 'https://www.law.go.kr/'
-                            )
-                            RETURNING id
-                            """
-                        )
-                    )
-                ).scalar_one()
-                artifact_id = (
-                    await session.execute(
-                        text(
-                            """
-                            INSERT INTO artifact(
-                                artifact_type, mime, storage_uri, content_hash, byte_size
-                            )
-                            VALUES (
-                                'raw-source', 'application/json',
-                                'local://raw/test/v1.json',
-                                :content_hash, 128
-                            )
-                            RETURNING id
-                            """
-                        ),
-                        {"content_hash": "a" * 64},
-                    )
-                ).scalar_one()
-                source_version_id = (
-                    await session.execute(
-                        text(
-                            """
-                            INSERT INTO source_version(
-                                source_id, artifact_id, version_label,
-                                effective_from, effective_to, raw_manifest_json, status
-                            )
-                            VALUES (
-                                :source_id, :artifact_id, 'mst:test-v1',
-                                DATE '2026-01-01', DATE '2026-12-31',
-                                '{}'::jsonb, 'published'
-                            )
-                            RETURNING id
-                            """
-                        ),
-                        {"source_id": source_id, "artifact_id": artifact_id},
-                    )
-                ).scalar_one()
-                evidence_id = (
-                    await session.execute(
-                        text(
-                            """
-                            INSERT INTO evidence_span(
-                                source_version_id, artifact_id, evidence_key,
-                                locator_json, text_snippet, normalized_text_hash,
-                                extractor_method, extraction_confidence
-                            )
-                            VALUES (
-                                :source_version_id, :artifact_id, 'lawgo:article:test-1',
-                                '{"source":"law.go.kr","article_no":"1"}'::jsonb,
-                                '직통계단을 2개소 이상 설치하여야 한다.',
-                                :text_hash, 'structured-parser', 1.0
-                            )
-                            RETURNING id
-                            """
-                        ),
-                        {
-                            "source_version_id": source_version_id,
-                            "artifact_id": artifact_id,
-                            "text_hash": "1" * 64,
-                        },
-                    )
-                ).scalar_one()
+            evidence_id = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM evidence_span
+                        WHERE source_version_id = :source_version_id
+                          AND locator_json->>'kind' = 'subparagraph'
+                        LIMIT 1
+                        """
+                    ),
+                    {"source_version_id": v1.source_version_id},
+                )
+            ).scalar_one()
 
         candidate_payload = AssertionCandidateCreate(
             evidence_span_id=evidence_id,
@@ -177,95 +221,60 @@ async def test_postgres_mvp0_golden_path():
             evidence = await queries.source_evidence(compiled.rule_version_id)
             authority = await queries.authority(compiled.rule_version_id)
             applicability = await queries.applicability(compiled.rule_version_id)
+            jurisdiction = await queries.jurisdiction_comparison(
+                rule_title="직통계단 수",
+                left_jurisdiction="KR",
+                right_jurisdiction="KR",
+                at_date=date(2026, 6, 1),
+            )
 
-            assert evidence.evidence[0].evidence_id == evidence_id
             assert evidence.evidence[0].assertion_review_status is ReviewStatus.APPROVED
             assert authority.authority_class == "statutory"
             assert authority.document_type == "statute"
             assert applicability.entries[0].jurisdiction_code == "KR"
+            assert jurisdiction.left is not None
+            assert jurisdiction.right is not None
+            assert jurisdiction.same_logic is True
+
+        v2 = await _persist_version(
+            session_factory=session_factory,
+            store=store,
+            mst="999002",
+            enforcement_date=date(2027, 1, 1),
+            required_count=3,
+        )
+        assert v2.created is True
+
+        second_work = await NormalizationOutboxWorker(
+            session_factory=session_factory,
+            artifact_store=store,
+        ).process_one()
+        assert second_work is not None
+        assert second_work.status == "published"
 
         async with session_factory() as session:
-            async with session.begin():
-                artifact_v2 = (
-                    await session.execute(
-                        text(
-                            """
-                            INSERT INTO artifact(
-                                artifact_type, mime, storage_uri, content_hash, byte_size
-                            )
-                            VALUES (
-                                'raw-source', 'application/json',
-                                'local://raw/test/v2.json',
-                                :content_hash, 128
-                            )
-                            RETURNING id
-                            """
-                        ),
-                        {"content_hash": "b" * 64},
-                    )
-                ).scalar_one()
-                source_version_v2 = (
-                    await session.execute(
-                        text(
-                            """
-                            INSERT INTO source_version(
-                                source_id, artifact_id, version_label,
-                                effective_from, raw_manifest_json, status
-                            )
-                            VALUES (
-                                :source_id, :artifact_id, 'mst:test-v2',
-                                DATE '2027-01-01', '{}'::jsonb, 'published'
-                            )
-                            RETURNING id
-                            """
-                        ),
-                        {"source_id": source_id, "artifact_id": artifact_v2},
-                    )
-                ).scalar_one()
+            previous = (
                 await session.execute(
                     text(
                         """
-                        UPDATE source_version
-                        SET superseded_by = :next_id
-                        WHERE id = :previous_id
+                        SELECT effective_to, superseded_by
+                        FROM source_version
+                        WHERE id = :source_version_id
                         """
                     ),
-                    {
-                        "next_id": source_version_v2,
-                        "previous_id": source_version_id,
-                    },
+                    {"source_version_id": v1.source_version_id},
                 )
-                await session.execute(
-                    text(
-                        """
-                        INSERT INTO evidence_span(
-                            source_version_id, artifact_id, evidence_key,
-                            locator_json, text_snippet, normalized_text_hash,
-                            extractor_method, extraction_confidence
-                        )
-                        VALUES (
-                            :source_version_id, :artifact_id, 'lawgo:article:test-1',
-                            '{"source":"law.go.kr","article_no":"1"}'::jsonb,
-                            '직통계단을 3개소 이상 설치하여야 한다.',
-                            :text_hash, 'structured-parser', 1.0
-                        )
-                        """
-                    ),
-                    {
-                        "source_version_id": source_version_v2,
-                        "artifact_id": artifact_v2,
-                        "text_hash": "2" * 64,
-                    },
-                )
+            ).one()
+            assert previous.effective_to == date(2026, 12, 31)
+            assert previous.superseded_by == v2.source_version_id
 
-        async with session_factory() as session:
             temporal = await CanonicalQueryRepository(session).temporal_comparison(
-                source_key="lawgo:law:test-building-act",
-                left_date=__import__("datetime").date(2026, 6, 1),
-                right_date=__import__("datetime").date(2027, 2, 1),
+                source_key="lawgo:law:001823",
+                left_date=date(2026, 6, 1),
+                right_date=date(2027, 2, 1),
             )
             assert temporal.same_source_version is False
-            assert temporal.changed_evidence_keys == ["lawgo:article:test-1"]
+            assert temporal.changed_evidence_keys
 
         async with session_factory() as session:
             async with session.begin():
@@ -285,6 +294,21 @@ async def test_postgres_mvp0_golden_path():
                 )
             ).scalar_one()
             assert status == "suspended"
+
+            outbox_states = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT status, attempts
+                        FROM outbox_message
+                        WHERE topic = 'normalization.source-version'
+                        ORDER BY id
+                        """
+                    )
+                )
+            ).all()
+            assert [row.status for row in outbox_states] == ["published", "published"]
+            assert all(row.attempts == 1 for row in outbox_states)
 
     finally:
         if engine is not None:
