@@ -53,11 +53,20 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
     args_list = args if isinstance(args, list) else [args]
 
     if op in {"and", "all"}:
-        return all(bool(evaluate_expr(item, facts)) for item in args_list)
+        values = [evaluate_expr(item, facts) for item in args_list]
+        if any(value is None for value in values):
+            raise MissingRuleFactError(f"missing operand for rule operator: {op}")
+        return all(bool(value) for value in values)
     if op in {"or", "any"}:
-        return any(bool(evaluate_expr(item, facts)) for item in args_list)
+        values = [evaluate_expr(item, facts) for item in args_list]
+        if any(value is None for value in values):
+            raise MissingRuleFactError(f"missing operand for rule operator: {op}")
+        return any(bool(value) for value in values)
     if op == "not":
-        return not bool(evaluate_expr(args_list[0], facts))
+        value = evaluate_expr(args_list[0], facts)
+        if value is None:
+            raise MissingRuleFactError("missing operand for rule operator: not")
+        return not bool(value)
 
     resolved = [
         evaluate_expr(item, facts) if isinstance(item, dict) else _resolve(item, facts)
@@ -100,12 +109,16 @@ def _matches_scope(applicability: dict[str, Any], facts: dict[str, Any]) -> bool
     jurisdictions = applicability.get("jurisdiction") or []
     if jurisdictions:
         current = _get_var("context.jurisdiction", facts)
+        if current is None:
+            raise MissingRuleFactError("missing context.jurisdiction")
         if current not in jurisdictions:
             return False
 
     use_groups = applicability.get("building_use_groups") or []
     if use_groups:
         current_use = _get_var("building.use_group", facts)
+        if current_use is None:
+            raise MissingRuleFactError("missing building.use_group")
         if current_use not in use_groups:
             return False
 
