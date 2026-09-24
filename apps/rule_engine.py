@@ -12,6 +12,7 @@ from archontos.observability import RULE_EVAL_LATENCY
 from archontos.query.contracts import (
     ApplicabilityView,
     AuthorityClassificationView,
+    DecisionProvenanceView,
     JurisdictionComparisonView,
     QueryClassificationView,
     SourceEvidenceView,
@@ -124,6 +125,17 @@ async def classify_query(query: Annotated[str, Query(min_length=1)]):
 async def query_source_evidence(rule_version_id: UUID):
     try:
         return await _queries().source_evidence(rule_version_id)
+    except CanonicalQueryNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/query/decision-provenance/{decision_id}",
+    response_model=DecisionProvenanceView,
+)
+async def query_decision_provenance(decision_id: UUID):
+    try:
+        return await _queries().decision_provenance(decision_id)
     except CanonicalQueryNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
