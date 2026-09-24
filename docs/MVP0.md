@@ -43,8 +43,21 @@ fetch official source
 | jurisdiction comparison | jurisdiction -> applicability -> rule_version |
 | temporal comparison | source/rule versions -> valid interval |
 | authority classification | rule_version.authority_class + issuer/source |
-| source evidence | rule -> evidence_span -> artifact/source |
+| source evidence | rule -> rule_assertion -> assertion -> evidence_span -> artifact/source |
 
-## Not in the first commit
+## 국가법령정보센터 adapter status
 
-The repository intentionally does not pretend to have a live law.go.kr ETL until the official source/API contract and access method are bound and tested. The source adapter boundary exists, and the next implementation ticket is to add the real official ingestion path with fixtures and provenance tests.
+The first official-source adapter is implemented as a read-only DRF client. The approved OC value is supplied outside Git and removed from persisted/returned request metadata.
+
+Implemented API paths:
+
+- current-law list: `lawSearch.do?target=law`
+- effective-version list/history: `lawSearch.do?target=eflaw`
+- current/promulgation body: `lawService.do?target=law`
+- effective-date body: `lawService.do?target=eflaw&MST=...&efYd=YYYYMMDD`
+
+Raw JSON is retained in a `RawSourceEnvelope` with deterministic SHA-256 before normalization. Body parsing preserves article units, addenda and attachments, including source-provided attachment links.
+
+## Next implementation ticket
+
+Persist the raw envelope to MinIO, upsert `source_document/source_version/artifact` in one canonical transaction, and emit a domain event + outbox message for normalization/projection.
