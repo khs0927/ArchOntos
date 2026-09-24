@@ -289,17 +289,22 @@ class CanonicalQueryRepository:
                   AND sv.effective_from <= :at_date
                   AND (sv.effective_to IS NULL OR sv.effective_to >= :at_date)
                 ORDER BY sv.effective_from DESC, sv.promulgated_at DESC NULLS LAST
-                LIMIT 1
+                LIMIT 2
                 """
             ),
             {"source_key": source_key, "at_date": at_date},
         )
-        row = result.first()
-        if row is None:
+        rows = result.all()
+        if not rows:
             raise CanonicalQueryNotFound(
                 f"no effective source version for {source_key!r} at {at_date.isoformat()}"
             )
-        return row
+        if len(rows) > 1:
+            raise CanonicalQueryError(
+                "ambiguous effective source versions for "
+                f"{source_key!r} at {at_date.isoformat()}"
+            )
+        return rows[0]
 
     async def _evidence_hashes(self, source_version_id: UUID) -> dict[str, str | None]:
         result = await self.session.execute(
@@ -353,7 +358,7 @@ class CanonicalQueryRepository:
                   AND rv.valid_from <= :at_date
                   AND (rv.valid_to IS NULL OR rv.valid_to >= :at_date)
                 ORDER BY rv.valid_from DESC
-                LIMIT 1
+                LIMIT 2
                 """
             ),
             {
@@ -362,9 +367,15 @@ class CanonicalQueryRepository:
                 "at_date": at_date,
             },
         )
-        row = result.first()
-        if row is None:
+        rows = result.all()
+        if not rows:
             return None
+        if len(rows) > 1:
+            raise CanonicalQueryError(
+                "ambiguous active rules for "
+                f"{rule_title!r} in {jurisdiction_code!r} at {at_date.isoformat()}"
+            )
+        row = rows[0]
         return JurisdictionRuleSnapshot(
             jurisdiction_code=row.jurisdiction_code,
             rule_version_id=row.rule_version_id,
