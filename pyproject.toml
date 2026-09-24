@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "archontos"
+version = "0.1.0"
+description = "OAIF - Open Architecture Intelligence Fabric for evidence-backed architecture regulation and design intelligence"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+license = {text = "Apache-2.0"}
+authors = [{name = "ArchOntos"}]
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.34,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "sqlalchemy>=2.0.36,<3",
+  "asyncpg>=0.30,<1",
+  "alembic>=1.14,<2",
+  "pgvector>=0.3.6,<1",
+  "httpx>=0.28,<1",
+  "minio>=7.2,<8",
+  "prometheus-client>=0.21,<1",
+  "opentelemetry-api>=1.29,<2",
+  "opentelemetry-sdk>=1.29,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+  "ruff>=0.9,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/archontos"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
