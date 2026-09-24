@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     allowed_jurisdictions: str = Field(default="KR")
     otel_enabled: bool = False
+    lawgo_oc: str | None = None
+    lawgo_base_url: str = "https://www.law.go.kr/DRF"
 
     @property
     def jurisdiction_set(self) -> set[str]:
