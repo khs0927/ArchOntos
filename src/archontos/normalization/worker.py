@@ -98,12 +98,17 @@ class NormalizationOutboxWorker:
                                     target_table, target_id, flag_type, severity, message
                                 )
                                 VALUES (
-                                    'source_version', :target_id,
+                                    :target_table, :target_id,
                                     'contract_violation', 'high', :message
                                 )
                                 """
                             ),
                             {
+                                "target_table": (
+                                    "source_version"
+                                    if source_version_id is not None
+                                    else "outbox_message"
+                                ),
                                 "target_id": source_version_id,
                                 "message": (
                                     f"normalization outbox {row.id} failed after retries: {error}"
