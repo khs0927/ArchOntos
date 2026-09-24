@@ -1,6 +1,10 @@
+from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from archontos.domain.enums import DecisionOutcome
 
 
 class RuleCompilationView(BaseModel):
@@ -9,14 +13,6 @@ class RuleCompilationView(BaseModel):
     assertion_id: UUID
     status: str
     created: bool
-
-
-from datetime import datetime
-from typing import Any
-
-from pydantic import Field
-
-from archontos.domain.enums import DecisionOutcome
 
 
 class CanonicalEvaluationRequest(BaseModel):
