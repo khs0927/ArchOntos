@@ -11,6 +11,7 @@ from archontos.query.contracts import (
     ApplicabilityEntryView,
     ApplicabilityView,
     AuthorityClassificationView,
+    DecisionProvenanceView,
     EvidenceBasisView,
     JurisdictionComparisonView,
     JurisdictionRuleSnapshot,
@@ -120,6 +121,47 @@ class CanonicalQueryRepository:
             source_effective_from=first.source_effective_from,
             source_effective_to=first.source_effective_to,
             evidence=evidence,
+        )
+
+    async def decision_provenance(
+        self,
+        decision_id: UUID,
+    ) -> DecisionProvenanceView:
+        result = await self.session.execute(
+            text(
+                """
+                SELECT
+                    d.id AS decision_id,
+                    d.outcome,
+                    d.decided_at,
+                    e.id AS evaluation_id,
+                    e.rule_version_id,
+                    e.object_version_id,
+                    e.inputs_json,
+                    e.result_json,
+                    e.evaluated_at
+                FROM decision d
+                JOIN evaluation e ON e.id = d.evaluation_id
+                WHERE d.id = :decision_id
+                """
+            ),
+            {"decision_id": decision_id},
+        )
+        row = result.first()
+        if row is None:
+            raise CanonicalQueryNotFound(f"decision not found: {decision_id}")
+
+        source_evidence = await self.source_evidence(row.rule_version_id)
+        return DecisionProvenanceView(
+            decision_id=row.decision_id,
+            evaluation_id=row.evaluation_id,
+            outcome=row.outcome,
+            decided_at=row.decided_at,
+            evaluated_at=row.evaluated_at,
+            object_version_id=row.object_version_id,
+            inputs=dict(row.inputs_json),
+            result=dict(row.result_json),
+            source_evidence=source_evidence,
         )
 
     async def authority(
