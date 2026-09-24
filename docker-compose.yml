@@ -9,8 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - archontos-postgres:/var/lib/postgresql/data
-      - ./db/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
-      - ./db/migrations/003_provenance_links.sql:/docker-entrypoint-initdb.d/003_provenance_links.sql:ro
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U archontos -d archontos"]
       interval: 5s
