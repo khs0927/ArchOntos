@@ -95,3 +95,29 @@ def test_missing_official_numbers_still_produce_unique_fallback_identity():
     assert units[0].evidence_key != units[1].evidence_key
     assert units[0].locator["article_index"] == 1
     assert units[1].locator["article_index"] == 2
+
+
+def test_numbered_evidence_identity_survives_reordering():
+    normalizer = LawEvidenceNormalizer()
+    original = normalizer.normalize(Body())
+    original_article = next(
+        unit for unit in original if unit.kind == "article" and unit.locator["article_no"] == "10"
+    )
+
+    reordered = Body()
+    reordered.articles = (
+        {
+            "조문번호": "9",
+            "조문제목": "새 조문",
+            "조문내용": "앞에 삽입된 조문",
+        },
+        *Body().articles,
+    )
+    shifted = normalizer.normalize(reordered)
+    shifted_article = next(
+        unit for unit in shifted if unit.kind == "article" and unit.locator["article_no"] == "10"
+    )
+
+    assert original_article.locator["article_index"] == 1
+    assert shifted_article.locator["article_index"] == 2
+    assert original_article.evidence_key == shifted_article.evidence_key
