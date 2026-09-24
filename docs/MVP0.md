@@ -20,9 +20,12 @@ fetch official source
  -> persist raw artifact + hash
  -> source_document / source_version
  -> evidence_span
- -> assertion
- -> reviewed rule / rule_version + rule_assertion links
+ -> assertion candidate
+ -> human review
+ -> approved assertion compiler
+ -> rule / rule_version + rule_assertion links
  -> applicability
+ -> canonical query APIs
  -> projection jobs
 ```
 
@@ -58,6 +61,21 @@ Implemented API paths:
 
 Raw JSON is retained in a `RawSourceEnvelope` with deterministic SHA-256 before normalization. Body parsing preserves article units, addenda and attachments, including source-provided attachment links.
 
+## Current implementation status
+
+Implemented through the canonical MVP-0 read path:
+
+- immutable official-source artifact and `source_version` persistence
+- effective interval / supersession maintenance for source versions
+- deterministic article/paragraph/subparagraph/item/addendum/attachment evidence normalization
+- stable `evidence_key` and normalized text hash
+- assertion candidate idempotency and review history
+- PostgreSQL provenance guard tying assertions to their evidence/source version
+- approved-only safe rule compilation
+- rule lifecycle: approved -> active, contested/rejected -> suspended
+- compiled applicability persistence
+- canonical query executors for source evidence, authority, applicability, temporal comparison and jurisdiction comparison
+
 ## Next implementation ticket
 
-Persist the raw envelope to MinIO, upsert `source_document/source_version/artifact` in one canonical transaction, and emit a domain event + outbox message for normalization/projection.
+Run migrations 001-006 against a real PostgreSQL instance and execute the MVP-0 Golden Scenario end to end. The release gate is not complete until PostgreSQL integration, migration replay, idempotent re-ingestion, provenance traversal and query API responses are verified against the same database.
