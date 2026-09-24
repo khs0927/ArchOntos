@@ -314,17 +314,6 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             ).scalar_one()
             assert status == "suspended"
 
-            with pytest.raises(RuleNotExecutableError):
-                async with session.begin():
-                    await CanonicalEvaluationRepository(session).evaluate(
-                        rule_version_id=compiled.rule_version_id,
-                        facts={
-                            "context": {"jurisdiction": "KR"},
-                            "stair": {"direct_count": 3},
-                        },
-                        evaluated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
-                    )
-
             outbox_states = (
                 await session.execute(
                     text(
@@ -339,6 +328,18 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             ).all()
             assert [row.status for row in outbox_states] == ["published", "published"]
             assert all(row.attempts == 1 for row in outbox_states)
+
+        async with session_factory() as session:
+            with pytest.raises(RuleNotExecutableError):
+                async with session.begin():
+                    await CanonicalEvaluationRepository(session).evaluate(
+                        rule_version_id=compiled.rule_version_id,
+                        facts={
+                            "context": {"jurisdiction": "KR"},
+                            "stair": {"direct_count": 3},
+                        },
+                        evaluated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                    )
 
     finally:
         if engine is not None:
