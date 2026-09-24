@@ -1,0 +1,84 @@
+from dataclasses import dataclass
+from datetime import date
+
+from archontos.normalization.legal import LawEvidenceNormalizer
+
+
+@dataclass
+class Body:
+    law_id: str = "001823"
+    mst: str = "999001"
+    enforcement_date: date = date(2026, 7, 1)
+    articles: tuple = (
+        {
+            "조문번호": "10",
+            "조문가지번호": "2",
+            "조문제목": "피난시설",
+            "조문내용": "제10조의2 전체 조문",
+            "항": {
+                "항번호": "1",
+                "항내용": "① 직통계단을 설치하여야 한다.",
+                "호": {
+                    "호번호": "2",
+                    "호내용": "2. 두 개소 이상 설치",
+                    "목": [
+                        {"목번호": "가", "목내용": "가. 첫 번째 조건"},
+                        {"목번호": "나", "목내용": "나. 두 번째 조건"},
+                    ],
+                },
+            },
+        },
+    )
+    addenda: tuple = (
+        {"부칙공포일자": "20260101", "부칙공포번호": "21000", "부칙내용": "부칙 내용"},
+    )
+    attachments: tuple = (
+        {
+            "별표번호": "1",
+            "별표가지번호": "0",
+            "별표제목": "용도별 건축물의 종류",
+            "별표서식PDF파일링크": "/LSW/flDownload.do?flSeq=123",
+        },
+    )
+
+
+def test_structured_body_becomes_hierarchical_evidence_units():
+    units = LawEvidenceNormalizer().normalize(Body())
+    assert [unit.kind for unit in units] == [
+        "article",
+        "paragraph",
+        "subparagraph",
+        "item",
+        "item",
+        "addendum",
+        "attachment",
+    ]
+
+    item = units[3]
+    assert item.locator["article_no"] == "10"
+    assert item.locator["article_branch_no"] == "2"
+    assert item.locator["paragraph_no"] == "1"
+    assert item.locator["subparagraph_no"] == "2"
+    assert item.locator["item_no"] == "가"
+    assert item.locator["effective_date"] == "2026-07-01"
+    assert item.extractor_method == "structured-parser"
+    assert item.extraction_confidence == 1.0
+
+
+def test_normalization_is_deterministic_and_keys_are_unique():
+    normalizer = LawEvidenceNormalizer()
+    first = normalizer.normalize(Body())
+    second = normalizer.normalize(Body())
+
+    assert first == second
+    assert len({unit.evidence_key for unit in first}) == len(first)
+    assert all(unit.normalized_text_hash for unit in first)
+
+
+def test_attachment_relative_link_is_preserved_as_official_absolute_url():
+    units = LawEvidenceNormalizer().normalize(Body())
+    attachment = units[-1]
+    assert attachment.locator["pdf_url"] == (
+        "https://www.law.go.kr/LSW/flDownload.do?flSeq=123"
+    )
+    assert attachment.text_snippet == "용도별 건축물의 종류"
