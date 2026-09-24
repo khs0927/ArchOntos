@@ -366,6 +366,85 @@ async def test_postgres_mvp0_golden_path(tmp_path):
                         evaluated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
                     )
 
+        async with session_factory() as session:
+            async with session.begin():
+                malformed_event_id = (
+                    await session.execute(
+                        text(
+                            """
+                            INSERT INTO domain_event(
+                                aggregate_type, aggregate_id, event_type, payload_json
+                            )
+                            VALUES (
+                                'source_version', 'malformed-test',
+                                'SourceVersionIngested', '{}'::jsonb
+                            )
+                            RETURNING event_id
+                            """
+                        )
+                    )
+                ).scalar_one()
+                malformed_outbox_id = (
+                    await session.execute(
+                        text(
+                            """
+                            INSERT INTO outbox_message(event_id, topic, payload_json)
+                            VALUES (
+                                :event_id, 'normalization.source-version', '{}'::jsonb
+                            )
+                            RETURNING id
+                            """
+                        ),
+                        {"event_id": malformed_event_id},
+                    )
+                ).scalar_one()
+
+        malformed_work = await NormalizationOutboxWorker(
+            session_factory=session_factory,
+            artifact_store=store,
+            max_attempts=1,
+        ).process_one()
+        assert malformed_work is not None
+        assert malformed_work.outbox_id == malformed_outbox_id
+        assert malformed_work.source_version_id is None
+        assert malformed_work.status == "failed"
+        assert malformed_work.attempts == 1
+
+        async with session_factory() as session:
+            failure_row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT status, attempts, last_error
+                        FROM outbox_message
+                        WHERE id = :outbox_id
+                        """
+                    ),
+                    {"outbox_id": malformed_outbox_id},
+                )
+            ).one()
+            assert failure_row.status == "failed"
+            assert failure_row.attempts == 1
+            assert failure_row.last_error
+
+            flag = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT target_table, flag_type, severity
+                        FROM quality_flag
+                        WHERE target_table = 'outbox_message'
+                          AND flag_type = 'contract_violation'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """
+                    )
+                )
+            ).one()
+            assert flag.target_table == "outbox_message"
+            assert flag.flag_type == "contract_violation"
+            assert flag.severity == "high"
+
     finally:
         if engine is not None:
             await engine.dispose()
