@@ -57,6 +57,7 @@ class CanonicalRuleCompilerRepository:
                     a.source_version_id,
                     sv.version_label AS source_version_label,
                     sv.effective_from,
+                    sv.effective_to,
                     sd.document_type,
                     sd.jurisdiction_code
                 FROM assertion a
@@ -157,11 +158,11 @@ class CanonicalRuleCompilerRepository:
             text(
                 """
                 INSERT INTO rule_version(
-                    rule_id, version_label, logic_expr, valid_from,
+                    rule_id, version_label, logic_expr, valid_from, valid_to,
                     authority_class, binding, status, compiler_version, compiled_at
                 )
                 VALUES (
-                    :rule_id, :version_label, CAST(:logic_expr AS jsonb), :valid_from,
+                    :rule_id, :version_label, CAST(:logic_expr AS jsonb), :valid_from, :valid_to,
                     :authority_class, true, 'active', :compiler_version, now()
                 )
                 ON CONFLICT (rule_id, version_label) DO NOTHING
@@ -177,6 +178,7 @@ class CanonicalRuleCompilerRepository:
                     sort_keys=True,
                 ),
                 "valid_from": row.effective_from,
+                "valid_to": row.effective_to,
                 "authority_class": authority_class,
                 "compiler_version": compiled.compiler_version,
             },
