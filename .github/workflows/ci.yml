@@ -12,6 +12,22 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_DB: archontos
+          POSTGRES_USER: archontos
+          POSTGRES_PASSWORD: archontos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U archontos -d archontos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ARCHONTOS_TEST_DATABASE_URL: postgresql://archontos:archontos@localhost:5432/archontos
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
