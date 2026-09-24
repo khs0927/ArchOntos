@@ -1,12 +1,25 @@
+from datetime import date
 from time import perf_counter
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 
 from apps.common import create_service
 from archontos.db.session import get_session_factory
 from archontos.domain.contracts import RuleEvaluationRequest, RuleEvaluationResult
 from archontos.observability import RULE_EVAL_LATENCY
+from archontos.query.contracts import (
+    ApplicabilityView,
+    AuthorityClassificationView,
+    JurisdictionComparisonView,
+    QueryClassificationView,
+    SourceEvidenceView,
+    TemporalComparisonView,
+)
+from archontos.query.persistence import CanonicalQueryNotFound
+from archontos.query.router import Mvp0QueryRouter
+from archontos.query.service import CanonicalQueryService
 from archontos.rules.compiler import RuleCompilationError
 from archontos.rules.contracts import RuleCompilationView
 from archontos.rules.engine import evaluate_rule
@@ -17,6 +30,10 @@ from archontos.rules.persistence import (
 from archontos.rules.service import RuleCompilationService
 
 app = create_service("rule-engine")
+
+
+def _queries() -> CanonicalQueryService:
+    return CanonicalQueryService(session_factory=get_session_factory())
 
 
 @app.post("/v1/evaluate", response_model=RuleEvaluationResult)
@@ -46,4 +63,76 @@ async def compile_assertion(assertion_id: UUID):
         assertion_id=result.assertion_id,
         status=result.status,
         created=result.created,
+    )
+
+
+@app.get("/v1/query/classify", response_model=QueryClassificationView)
+async def classify_query(query: Annotated[str, Query(min_length=1)]):
+    return QueryClassificationView(
+        query=query,
+        intent=Mvp0QueryRouter().classify(query),
+    )
+
+
+@app.get(
+    "/v1/query/source-evidence/{rule_version_id}",
+    response_model=SourceEvidenceView,
+)
+async def query_source_evidence(rule_version_id: UUID):
+    try:
+        return await _queries().source_evidence(rule_version_id)
+    except CanonicalQueryNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/query/authority/{rule_version_id}",
+    response_model=AuthorityClassificationView,
+)
+async def query_authority(rule_version_id: UUID):
+    try:
+        return await _queries().authority(rule_version_id)
+    except CanonicalQueryNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/query/applicability/{rule_version_id}",
+    response_model=ApplicabilityView,
+)
+async def query_applicability(rule_version_id: UUID):
+    try:
+        return await _queries().applicability(rule_version_id)
+    except CanonicalQueryNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/query/temporal", response_model=TemporalComparisonView)
+async def query_temporal_comparison(
+    source_key: Annotated[str, Query(min_length=1)],
+    left_date: date,
+    right_date: date,
+):
+    try:
+        return await _queries().temporal_comparison(
+            source_key=source_key,
+            left_date=left_date,
+            right_date=right_date,
+        )
+    except CanonicalQueryNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/v1/query/jurisdiction", response_model=JurisdictionComparisonView)
+async def query_jurisdiction_comparison(
+    rule_title: Annotated[str, Query(min_length=1)],
+    left_jurisdiction: Annotated[str, Query(min_length=2)],
+    right_jurisdiction: Annotated[str, Query(min_length=2)],
+    at_date: date,
+):
+    return await _queries().jurisdiction_comparison(
+        rule_title=rule_title,
+        left_jurisdiction=left_jurisdiction,
+        right_jurisdiction=right_jurisdiction,
+        at_date=at_date,
     )
