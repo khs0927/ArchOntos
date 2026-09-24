@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -116,3 +116,15 @@ class JurisdictionComparisonView(BaseModel):
     left: JurisdictionRuleSnapshot | None = None
     right: JurisdictionRuleSnapshot | None = None
     same_logic: bool | None = None
+
+
+class DecisionProvenanceView(BaseModel):
+    decision_id: UUID
+    evaluation_id: UUID
+    outcome: str
+    decided_at: datetime
+    evaluated_at: datetime
+    object_version_id: UUID | None = None
+    inputs: dict[str, Any]
+    result: dict[str, Any]
+    source_evidence: SourceEvidenceView
