@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "archontos"
@@ -28,13 +28,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.3,<9",
+  "pytest>=8.3,<10",
   "pytest-asyncio>=0.25,<1",
   "ruff>=0.9,<1",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/archontos"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

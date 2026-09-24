@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from typing import Annotated
 
 from fastapi import HTTPException, Query
 
@@ -26,9 +27,9 @@ async def validate_legal_version(payload: NormalizedLegalVersion):
 
 @app.get("/v1/sources/lawgo/search")
 async def search_lawgo(
-    query: str = Query(min_length=1),
-    page: int = Query(default=1, ge=1),
-    display: int = Query(default=20, ge=1, le=100),
+    query: Annotated[str, Query(min_length=1)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    display: Annotated[int, Query(ge=1, le=100)] = 20,
 ):
     try:
         result = await _lawgo().search_laws(query, page=page, display=display)
@@ -46,9 +47,9 @@ async def search_lawgo(
 
 @app.get("/v1/sources/lawgo/effective-versions")
 async def search_lawgo_effective_versions(
-    query: str = Query(min_length=1),
-    page: int = Query(default=1, ge=1),
-    display: int = Query(default=100, ge=1, le=100),
+    query: Annotated[str, Query(min_length=1)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    display: Annotated[int, Query(ge=1, le=100)] = 100,
 ):
     try:
         result = await _lawgo().search_effective_versions(
