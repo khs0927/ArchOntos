@@ -21,7 +21,7 @@ fetch official source
  -> source_document / source_version
  -> evidence_span
  -> assertion
- -> reviewed rule / rule_version
+ -> reviewed rule / rule_version + rule_assertion links
  -> applicability
  -> projection jobs
 ```

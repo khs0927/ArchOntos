@@ -55,7 +55,10 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
     if op == "not":
         return not bool(evaluate_expr(args_list[0], facts))
 
-    resolved = [evaluate_expr(item, facts) if isinstance(item, dict) else _resolve(item, facts) for item in args_list]
+    resolved = [
+        evaluate_expr(item, facts) if isinstance(item, dict) else _resolve(item, facts)
+        for item in args_list
+    ]
     if op == "==":
         return resolved[0] == resolved[1]
     if op == "!=":

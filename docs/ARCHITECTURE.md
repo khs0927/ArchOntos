@@ -24,7 +24,8 @@ The initial event transport is a **transactional outbox** stored with canonical 
 decision
   -> evaluation
   -> rule_version
-  -> rule/source_version
+  -> rule_version/rule
+  -> rule_assertion
   -> assertion
   -> evidence_span
   -> artifact/source_version

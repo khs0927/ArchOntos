@@ -12,7 +12,6 @@ class SourceDocumentContract(BaseModel):
     jurisdiction_code: str = Field(min_length=2)
     document_type: Literal["statute", "regulation", "rule", "ordinance", "standard", "guide"]
     url: HttpUrl | None = None
-    content_hash: str = Field(min_length=16)
 
 
 class SourceVersionContract(BaseModel):
