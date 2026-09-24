@@ -12,13 +12,13 @@ ALTER TABLE assertion
 ALTER TABLE assertion
   ADD COLUMN IF NOT EXISTS review_note text;
 
--- Legacy reviewed rows are treated as approved before tightening the state machine.
+-- Remove the legacy state check before translating reviewed -> approved.
+ALTER TABLE assertion
+  DROP CONSTRAINT IF EXISTS assertion_review_status_check;
+
 UPDATE assertion
 SET review_status = 'approved'
 WHERE review_status = 'reviewed';
-
-ALTER TABLE assertion
-  DROP CONSTRAINT IF EXISTS assertion_review_status_check;
 
 ALTER TABLE assertion
   ADD CONSTRAINT assertion_review_status_check
