@@ -12,7 +12,8 @@ class AuthorityClass(StrEnum):
 
 class ReviewStatus(StrEnum):
     UNREVIEWED = "unreviewed"
-    REVIEWED = "reviewed"
+    APPROVED = "approved"
+    REJECTED = "rejected"
     CONTESTED = "contested"
 
 
