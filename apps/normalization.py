@@ -65,7 +65,9 @@ async def process_normalization_outbox():
     return {
         "processed": True,
         "outbox_id": result.outbox_id,
-        "source_version_id": str(result.source_version_id),
+        "source_version_id": (
+            str(result.source_version_id) if result.source_version_id is not None else None
+        ),
         "status": result.status,
         "attempts": result.attempts,
         "evidence_count": result.evidence_count,
