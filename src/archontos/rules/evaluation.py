@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from archontos.domain.enums import DecisionOutcome
-from archontos.rules.engine import evaluate_rule
+from archontos.rules.engine import RuleEvaluationError, evaluate_rule
 
 
 class CanonicalEvaluationError(ValueError):
@@ -113,7 +113,13 @@ class CanonicalEvaluationRepository:
                 f"rule version {rule_version_id} has non-approved assertion provenance"
             )
 
-        result = evaluate_rule(dict(rule_row.logic_expr), facts)
+        try:
+            result = evaluate_rule(dict(rule_row.logic_expr), facts)
+        except RuleEvaluationError as exc:
+            raise RuleNotExecutableError(
+                f"canonical rule version {rule_version_id} is not executable: {exc}"
+            ) from exc
+
         result_payload = {
             "applicable": result.applicable,
             "outcome": result.outcome.value if result.outcome is not None else None,
