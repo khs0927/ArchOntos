@@ -28,13 +28,54 @@ services:
     volumes:
       - archontos-minio:/data
 
+  ingestion:
+    build: .
+    command: ["uvicorn", "apps.ingestion:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment: &app_env
+      ARCHONTOS_DATABASE_URL: postgresql+asyncpg://archontos:archontos@postgres:5432/archontos
+      ARCHONTOS_ARTIFACT_BACKEND: minio
+      ARCHONTOS_MINIO_ENDPOINT: minio:9000
+      ARCHONTOS_MINIO_ACCESS_KEY: archontos
+      ARCHONTOS_MINIO_SECRET_KEY: change-me-now
+      ARCHONTOS_MINIO_BUCKET: archontos
+      ARCHONTOS_MINIO_SECURE: "false"
+      ARCHONTOS_LAWGO_OC: ${ARCHONTOS_LAWGO_OC:-}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  normalization:
+    build: .
+    command: ["uvicorn", "apps.normalization:app", "--host", "0.0.0.0", "--port", "8002"]
+    environment: *app_env
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
   rule-engine:
     build: .
     command: ["uvicorn", "apps.rule_engine:app", "--host", "0.0.0.0", "--port", "8003"]
-    environment:
-      ARCHONTOS_DATABASE_URL: postgresql+asyncpg://archontos:archontos@postgres:5432/archontos
+    environment: *app_env
     ports:
       - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  projection:
+    build: .
+    command: ["uvicorn", "apps.projection:app", "--host", "0.0.0.0", "--port", "8004"]
+    environment: *app_env
+    ports:
+      - "8004:8004"
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,8 +83,7 @@ services:
   action:
     build: .
     command: ["uvicorn", "apps.action:app", "--host", "0.0.0.0", "--port", "8005"]
-    environment:
-      ARCHONTOS_DATABASE_URL: postgresql+asyncpg://archontos:archontos@postgres:5432/archontos
+    environment: *app_env
     ports:
       - "8005:8005"
     depends_on:
