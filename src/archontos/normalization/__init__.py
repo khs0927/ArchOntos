@@ -5,6 +5,7 @@ from archontos.normalization.persistence import (
     EvidencePersistenceResult,
 )
 from archontos.normalization.service import LawNormalizationResult, LawNormalizationService
+from archontos.normalization.worker import NormalizationOutboxWorker, NormalizationWorkResult
 
 __all__ = [
     "CanonicalEvidenceRepository",
@@ -13,5 +14,7 @@ __all__ = [
     "LawEvidenceNormalizer",
     "LawNormalizationResult",
     "LawNormalizationService",
+    "NormalizationOutboxWorker",
+    "NormalizationWorkResult",
     "LegalEvidenceUnit",
 ]
