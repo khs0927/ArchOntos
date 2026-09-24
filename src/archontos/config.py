@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     minio_access_key: str = "archontos"
     minio_secret_key: str = "change-me"
     minio_secure: bool = False
+    minio_bucket: str = "archontos"
+    artifact_backend: str = "local"
+    artifact_local_path: str = "local-data/artifacts"
     allowed_jurisdictions: str = Field(default="KR")
     otel_enabled: bool = False
     lawgo_oc: str | None = None
