@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from archontos.ingestion.adapters import RawSourceEnvelope
+
+
+class ArtifactReadError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +26,8 @@ class ArtifactRef:
 
 class ArtifactStore(Protocol):
     async def put_envelope(self, envelope: RawSourceEnvelope) -> ArtifactRef: ...
+
+    async def get_json(self, storage_uri: str) -> dict[str, Any]: ...
 
 
 class LocalArtifactStore:
@@ -48,6 +56,22 @@ class LocalArtifactStore:
             content_hash=digest,
             byte_size=len(payload),
         )
+
+    async def get_json(self, storage_uri: str) -> dict[str, Any]:
+        if not storage_uri.startswith("local://"):
+            raise ArtifactReadError(f"unsupported local artifact URI: {storage_uri!r}")
+        relative = storage_uri.removeprefix("local://")
+        root = self.root.resolve()
+        path = (self.root / relative).resolve()
+        if not path.is_relative_to(root):
+            raise ArtifactReadError("artifact path escapes configured local root")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ArtifactReadError(f"cannot read JSON artifact: {storage_uri}") from exc
+        if not isinstance(payload, dict):
+            raise ArtifactReadError("JSON artifact root must be an object")
+        return payload
 
 
 class MinioArtifactStore:
@@ -103,3 +127,27 @@ class MinioArtifactStore:
 
     async def put_envelope(self, envelope: RawSourceEnvelope) -> ArtifactRef:
         return await asyncio.to_thread(self._put_sync, envelope)
+
+    def _get_json_sync(self, storage_uri: str) -> dict[str, Any]:
+        parsed = urlparse(storage_uri)
+        if parsed.scheme != "s3":
+            raise ArtifactReadError(f"unsupported MinIO artifact URI: {storage_uri!r}")
+        bucket = parsed.netloc
+        key = parsed.path.lstrip("/")
+        if bucket != self.bucket or not key:
+            raise ArtifactReadError("artifact URI is outside the configured MinIO bucket")
+
+        response = self.client.get_object(bucket, key)
+        try:
+            payload = json.loads(response.read().decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ArtifactReadError(f"cannot read JSON artifact: {storage_uri}") from exc
+        finally:
+            response.close()
+            response.release_conn()
+        if not isinstance(payload, dict):
+            raise ArtifactReadError("JSON artifact root must be an object")
+        return payload
+
+    async def get_json(self, storage_uri: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._get_json_sync, storage_uri)
