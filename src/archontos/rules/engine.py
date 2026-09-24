@@ -11,6 +11,10 @@ class RuleEvaluationError(ValueError):
     pass
 
 
+class MissingRuleFactError(RuleEvaluationError):
+    pass
+
+
 def _get_var(path: str, facts: dict[str, Any], default: Any = None) -> Any:
     current: Any = facts
     for part in path.split("."):
@@ -59,6 +63,11 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
         evaluate_expr(item, facts) if isinstance(item, dict) else _resolve(item, facts)
         for item in args_list
     ]
+    if op in {"==", "!=", ">=", "<=", ">", "<", "in"} and any(
+        value is None for value in resolved
+    ):
+        raise MissingRuleFactError(f"missing operand for rule operator: {op}")
+
     if op == "==":
         return resolved[0] == resolved[1]
     if op == "!=":
@@ -107,8 +116,20 @@ def _matches_scope(applicability: dict[str, Any], facts: dict[str, Any]) -> bool
 def evaluate_rule(rule_document: dict[str, Any], facts: dict[str, Any]) -> RuleEvaluationResult:
     doc = deepcopy(rule_document)
     applicability = doc.get("applicability", {})
-    if applicability and not _matches_scope(applicability, facts):
-        return RuleEvaluationResult(applicable=False, outcome=None, reason="Rule not applicable")
+    try:
+        if applicability and not _matches_scope(applicability, facts):
+            return RuleEvaluationResult(
+                applicable=False,
+                outcome=None,
+                reason="Rule not applicable",
+            )
+    except MissingRuleFactError as exc:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Insufficient facts to determine rule applicability",
+            details={"error": str(exc)},
+        )
 
     working_facts = deepcopy(facts)
     for exception in doc.get("exceptions", []):
@@ -126,7 +147,17 @@ def evaluate_rule(rule_document: dict[str, Any], facts: dict[str, Any]) -> RuleE
     if condition is None:
         raise RuleEvaluationError("Rule must contain an 'if' expression")
 
-    branch = body.get("then") if evaluate_expr(condition, working_facts) else body.get("else")
+    try:
+        condition_matches = bool(evaluate_expr(condition, working_facts))
+    except MissingRuleFactError as exc:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Insufficient facts to evaluate rule",
+            details={"error": str(exc)},
+        )
+
+    branch = body.get("then") if condition_matches else body.get("else")
     if not isinstance(branch, dict):
         raise RuleEvaluationError("Rule branch must be an object")
 
