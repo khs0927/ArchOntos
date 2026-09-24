@@ -73,3 +73,32 @@ def test_missing_required_fact_routes_to_review():
     assert result.applicable is True
     assert result.outcome is DecisionOutcome.REVIEW
     assert result.reason == "Insufficient facts to evaluate rule"
+
+
+def test_missing_applicability_fact_routes_to_review():
+    payload = facts()
+    del payload["context"]["jurisdiction"]
+    result = evaluate_rule(sample_rule(), payload)
+    assert result.applicable is True
+    assert result.outcome is DecisionOutcome.REVIEW
+    assert result.reason == "Insufficient facts to determine rule applicability"
+
+
+def test_missing_exception_fact_routes_to_review():
+    rule = {
+        "exceptions": [
+            {
+                "condition": {"==": [{"var": "building.is_special_case"}, True]},
+                "override": {"stair.direct_count": 2},
+            }
+        ],
+        "rule": {
+            "if": {">=": [{"var": "stair.direct_count"}, 2]},
+            "then": {"PASS": True},
+            "else": {"FAIL": True},
+        },
+    }
+    result = evaluate_rule(rule, {"stair": {"direct_count": 1}})
+    assert result.applicable is True
+    assert result.outcome is DecisionOutcome.REVIEW
+    assert result.reason == "Insufficient facts to evaluate rule exceptions"
