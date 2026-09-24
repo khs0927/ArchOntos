@@ -15,15 +15,33 @@ from archontos.assertions.persistence import (
 )
 from archontos.assertions.review import AssertionReviewError, promotable_to_rule
 from archontos.assertions.service import AssertionWorkflowService
+from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.domain.contracts import AssertionContract, EvidenceSpanContract
 from archontos.domain.enums import ReviewStatus
+from archontos.normalization.worker import NormalizationOutboxWorker
+from archontos.storage.artifacts import LocalArtifactStore, MinioArtifactStore
 
 app = create_service("normalization")
+settings = get_settings()
 
 
 def _workflow() -> AssertionWorkflowService:
     return AssertionWorkflowService(session_factory=get_session_factory())
+
+
+def _artifact_store():
+    if settings.artifact_backend == "minio":
+        return MinioArtifactStore(
+            endpoint=settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            bucket=settings.minio_bucket,
+            secure=settings.minio_secure,
+        )
+    if settings.artifact_backend == "local":
+        return LocalArtifactStore(settings.artifact_local_path)
+    raise RuntimeError(f"unsupported artifact backend: {settings.artifact_backend}")
 
 
 @app.post("/v1/contracts/assertion/validate")
@@ -33,6 +51,25 @@ async def validate_assertion(evidence: EvidenceSpanContract, assertion: Assertio
         "extractor_method": evidence.extractor_method,
         "interpreter_method": assertion.interpreter_method,
         "review_status": assertion.review_status,
+    }
+
+
+@app.post("/v1/normalization/process-one")
+async def process_normalization_outbox():
+    result = await NormalizationOutboxWorker(
+        session_factory=get_session_factory(),
+        artifact_store=_artifact_store(),
+    ).process_one()
+    if result is None:
+        return {"processed": False}
+    return {
+        "processed": True,
+        "outbox_id": result.outbox_id,
+        "source_version_id": str(result.source_version_id),
+        "status": result.status,
+        "attempts": result.attempts,
+        "evidence_count": result.evidence_count,
+        "error": result.error,
     }
 
 
