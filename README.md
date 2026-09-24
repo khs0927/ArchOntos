@@ -16,7 +16,12 @@ Implemented foundation:
 - role-based hyperedges and immutable domain events
 - transactional outbox for projection/event delivery
 - JSON rule DSL evaluator with PASS / FAIL / REVIEW outcomes
-- five-query MVP-0 intent router
+- deterministic law.go.kr article/addendum/attachment evidence normalizer
+- idempotent evidence identity and canonical evidence persistence
+- assertion candidate + human review state machine
+- approved-assertion-only safe rule compiler
+- rule active/suspended lifecycle tied to assertion review state
+- five-query MVP-0 intent router and canonical query executors
 - service boundaries for ingestion, normalization, rule engine, projection and action
 - FastAPI health and contract endpoints
 - PostgreSQL 18 + pgvector development stack
@@ -24,6 +29,8 @@ Implemented foundation:
 - Helm/GitOps deployment skeleton
 - unit tests for rule evaluation, data contracts and query routing
 - official law.go.kr DRF client for current/effective versions, articles and attachments
+- immutable artifact/source-version ingestion with effective interval maintenance
+- canonical source-evidence, authority, applicability, temporal and jurisdiction query APIs
 
 ## Architecture
 
