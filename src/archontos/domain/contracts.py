@@ -29,8 +29,12 @@ class SourceVersionContract(BaseModel):
 
 
 class EvidenceSpanContract(BaseModel):
+    evidence_key: str | None = Field(default=None, min_length=1)
     locator: dict[str, Any]
     text_snippet: str | None = None
+    normalized_text_hash: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
     extractor_method: Literal["structured-parser", "llm", "human"]
     extraction_confidence: float | None = Field(default=None, ge=0, le=1)
 

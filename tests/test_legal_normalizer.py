@@ -82,3 +82,16 @@ def test_attachment_relative_link_is_preserved_as_official_absolute_url():
         "https://www.law.go.kr/LSW/flDownload.do?flSeq=123"
     )
     assert attachment.text_snippet == "용도별 건축물의 종류"
+
+
+def test_missing_official_numbers_still_produce_unique_fallback_identity():
+    body = Body()
+    body.articles = (
+        {"조문내용": "첫 번째 번호 누락 조문"},
+        {"조문내용": "두 번째 번호 누락 조문"},
+    )
+    units = LawEvidenceNormalizer().normalize(body)
+    assert len(units) == 4
+    assert units[0].evidence_key != units[1].evidence_key
+    assert units[0].locator["article_index"] == 1
+    assert units[1].locator["article_index"] == 2

@@ -55,14 +55,19 @@ def _locator_key(locator: dict[str, Any]) -> str:
         key: locator.get(key)
         for key in (
             "kind",
+            "article_index",
             "article_no",
             "article_branch_no",
+            "paragraph_index",
             "paragraph_no",
+            "subparagraph_index",
             "subparagraph_no",
+            "item_index",
             "item_no",
             "addendum_index",
             "addendum_promulgation_date",
             "addendum_promulgation_no",
+            "attachment_index",
             "attachment_no",
             "attachment_branch_no",
         )
@@ -103,10 +108,10 @@ class LawEvidenceNormalizer:
             "effective_date": effective_date,
         }
 
-        for article in getattr(body, "articles", ()):
+        for article_index, article in enumerate(getattr(body, "articles", ()), start=1):
             if not isinstance(article, dict):
                 continue
-            units.extend(self._normalize_article(base, article))
+            units.extend(self._normalize_article(base, article, article_index))
 
         for index, addendum in enumerate(getattr(body, "addenda", ()), start=1):
             if not isinstance(addendum, dict):
@@ -143,12 +148,13 @@ class LawEvidenceNormalizer:
         return tuple(units)
 
     def _normalize_article(
-        self, base: dict[str, Any], article: dict[str, Any]
+        self, base: dict[str, Any], article: dict[str, Any], article_index: int
     ) -> list[LegalEvidenceUnit]:
         article_no = _string(article.get("조문번호"))
         article_branch_no = _string(article.get("조문가지번호"))
         common = {
             **base,
+            "article_index": article_index,
             "article_no": article_no,
             "article_branch_no": article_branch_no,
             "article_title": _string(article.get("조문제목")),
@@ -159,20 +165,25 @@ class LawEvidenceNormalizer:
         ]
 
         paragraphs = _children(article, "항", "항단위")
-        for paragraph in paragraphs:
-            units.extend(self._normalize_paragraph(common, paragraph))
+        for paragraph_index, paragraph in enumerate(paragraphs, start=1):
+            units.extend(self._normalize_paragraph(common, paragraph, paragraph_index))
 
         if not paragraphs:
-            for subparagraph in _children(article, "호", "호단위"):
-                units.extend(self._normalize_subparagraph(common, subparagraph))
+            for subparagraph_index, subparagraph in enumerate(
+                _children(article, "호", "호단위"), start=1
+            ):
+                units.extend(
+                    self._normalize_subparagraph(common, subparagraph, subparagraph_index)
+                )
 
         return units
 
     def _normalize_paragraph(
-        self, common: dict[str, Any], paragraph: dict[str, Any]
+        self, common: dict[str, Any], paragraph: dict[str, Any], paragraph_index: int
     ) -> list[LegalEvidenceUnit]:
         paragraph_common = {
             **common,
+            "paragraph_index": paragraph_index,
             "paragraph_no": _string(paragraph.get("항번호")),
         }
         units = [
@@ -180,15 +191,22 @@ class LawEvidenceNormalizer:
                 {**paragraph_common, "kind": "paragraph"}, _string(paragraph.get("항내용"))
             )
         ]
-        for subparagraph in _children(paragraph, "호", "호단위"):
-            units.extend(self._normalize_subparagraph(paragraph_common, subparagraph))
+        for subparagraph_index, subparagraph in enumerate(
+            _children(paragraph, "호", "호단위"), start=1
+        ):
+            units.extend(
+                self._normalize_subparagraph(
+                    paragraph_common, subparagraph, subparagraph_index
+                )
+            )
         return units
 
     def _normalize_subparagraph(
-        self, common: dict[str, Any], subparagraph: dict[str, Any]
+        self, common: dict[str, Any], subparagraph: dict[str, Any], subparagraph_index: int
     ) -> list[LegalEvidenceUnit]:
         subparagraph_common = {
             **common,
+            "subparagraph_index": subparagraph_index,
             "subparagraph_no": _string(subparagraph.get("호번호")),
         }
         units = [
@@ -197,10 +215,11 @@ class LawEvidenceNormalizer:
                 _string(subparagraph.get("호내용")),
             )
         ]
-        for item in _children(subparagraph, "목", "목단위"):
+        for item_index, item in enumerate(_children(subparagraph, "목", "목단위"), start=1):
             locator = {
                 **subparagraph_common,
                 "kind": "item",
+                "item_index": item_index,
                 "item_no": _string(item.get("목번호")),
             }
             units.append(self._unit(locator, _string(item.get("목내용"))))
