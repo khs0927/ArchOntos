@@ -1,0 +1,21 @@
+{
+  "contract_version": "4.0",
+  "mode": "offline_reference",
+  "source_mutation_enabled": false,
+  "paid_external_api_enabled": false,
+  "external_llm_enabled": false,
+  "provider_allowlist": [],
+  "oda_adapter_enabled": false,
+  "production_crawl_enabled": false,
+  "resource_limits": {
+    "download_bytes_per_batch": null,
+    "ocr_pages_per_batch": null,
+    "cad_concurrency": 1,
+    "scratch_max_bytes": null
+  },
+  "missing_resource_limit_action": "PAUSE_BEFORE_BATCH",
+  "unknown_access_action": "DENY_CONTENT",
+  "unknown_relevance_action": "REVIEW_REQUIRED",
+  "approved_exception_counts_as_extraction_success": false,
+  "note": "정책 선언 예제. 실제 작업자와 API 게이트의 강제 적용은 운영 구현 및 인수시험 대상."
+}

@@ -1,0 +1,26 @@
+{
+  "created_utc": "2026-09-24T16:14:59.700444+00:00",
+  "scope": "offline synthetic reference contracts",
+  "status": "PASS",
+  "counts": {
+    "sql_json_contract_checks": 24,
+    "rdf_shacl_cases": 6,
+    "policy_unittests": 11
+  },
+  "total_passed": 41,
+  "python": "3.12.14",
+  "sqlite": "3.53.1",
+  "dependencies": {
+    "jsonschema": "4.26.0",
+    "rdflib": "7.6.0",
+    "pyshacl": "0.40.1"
+  },
+  "not_run": [
+    "Google Drive full inventory and live change-feed replay",
+    "Real CAD/SKP/PDF/HWP content parsing and fidelity",
+    "ZWCAD 2025/2026 automation",
+    "Production ACL, concurrent leases, HTTP retries and recovery",
+    "PostgreSQL migration and production restore drill",
+    "Professional legal applicability and measurement validation"
+  ]
+}

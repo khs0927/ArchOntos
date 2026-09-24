@@ -1,0 +1,30 @@
+{
+  "status": "PASS",
+  "checks": [
+    "foreign key rejects nonexistent snapshot",
+    "duplicate logical run rejected",
+    "assertion without evidence rejected",
+    "evidence with wrong snapshot rejected",
+    "assertion with different run evidence rejected",
+    "acceptance without reviewer rejected",
+    "owl sameAs rejected",
+    "stale assertions retain provenance",
+    "captured snapshot without hash rejected",
+    "metadata is not a content snapshot",
+    "inaccessible metadata observation retained separately",
+    "corpus move cannot duplicate source file",
+    "new profile version creates distinct job",
+    "duplicate archive paths preserve distinct ordinals",
+    "duplicate archive ordinal rejected",
+    "rollback preserves cursor and receipt atomicity",
+    "valid complete scoped extraction accepted",
+    "profile version required",
+    "owl sameAs extraction rejected",
+    "unknown remainder cannot be complete",
+    "incomplete count cannot be complete",
+    "missing evidence reference rejected",
+    "extractor cannot self-approve assertions",
+    "unsupported cannot emit assertions"
+  ],
+  "limits": "Offline synthetic contract validation only; no Drive scan, file parser or production runtime validated."
+}

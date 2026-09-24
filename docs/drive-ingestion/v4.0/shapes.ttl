@@ -1,0 +1,51 @@
+@prefix arch: <urn:arch:v4:> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+arch:SnapshotShape a sh:NodeShape ; sh:targetClass arch:ContentSnapshot ;
+ sh:property [ sh:path arch:ofArtifact ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:class arch:SourceArtifact ] ;
+ sh:property [ sh:path arch:sha256 ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:datatype xsd:string ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+arch:RunShape a sh:NodeShape ; sh:targetClass arch:ExtractionRun ;
+ sh:property [ sh:path arch:inputSnapshot ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:class arch:ContentSnapshot ] ;
+ sh:property [ sh:path arch:profileVersion ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:datatype xsd:string ; sh:minLength 1 ] .
+
+arch:EvidenceShape a sh:NodeShape ; sh:targetClass arch:Evidence ;
+ sh:property [ sh:path arch:fromSnapshot ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:class arch:ContentSnapshot ] ;
+ sh:property [ sh:path prov:wasGeneratedBy ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:class arch:ExtractionRun ] ;
+ sh:property [ sh:path arch:locator ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:datatype xsd:string ; sh:minLength 1 ] ;
+ sh:sparql [
+   sh:message "Evidence snapshot must match extraction run input." ;
+   sh:select """
+     PREFIX arch: <urn:arch:v4:>
+     PREFIX prov: <http://www.w3.org/ns/prov#>
+     SELECT $this WHERE {
+       $this arch:fromSnapshot ?s ; prov:wasGeneratedBy ?r .
+       ?r arch:inputSnapshot ?actual .
+       FILTER (?s != ?actual)
+     }
+   """
+ ] .
+
+arch:AssertionShape a sh:NodeShape ; sh:targetClass arch:RelationshipAssertion ;
+ sh:property [ sh:path arch:subject ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+ sh:property [ sh:path arch:predicate ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:nodeKind sh:IRI ; sh:not [ sh:in (owl:sameAs) ] ] ;
+ sh:property [ sh:path arch:object ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+ sh:property [ sh:path arch:evidence ; sh:minCount 1 ; sh:class arch:Evidence ] ;
+ sh:property [ sh:path arch:reviewState ; sh:minCount 1 ; sh:maxCount 1 ;
+               sh:in ("PROVISIONAL" "ACCEPTED" "REJECTED" "STALE") ] ;
+ sh:or (
+   [ sh:not [ sh:property [ sh:path arch:reviewState ; sh:hasValue "ACCEPTED" ] ] ]
+   [ sh:property [ sh:path arch:reviewer ; sh:minCount 1 ; sh:minLength 1 ] ;
+     sh:property [ sh:path arch:reviewedAt ; sh:minCount 1 ; sh:datatype xsd:dateTime ] ]
+ ) .

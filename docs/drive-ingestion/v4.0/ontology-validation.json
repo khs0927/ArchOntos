@@ -1,0 +1,35 @@
+{
+  "kind": "synthetic_contract_tests",
+  "cases": [
+    {
+      "name": "valid_evidence_chain",
+      "passed": true,
+      "conforms": true
+    },
+    {
+      "name": "missing_snapshot_rejected",
+      "passed": true,
+      "conforms": false
+    },
+    {
+      "name": "cross_run_snapshot_rejected",
+      "passed": true,
+      "conforms": false
+    },
+    {
+      "name": "file_sameas_rejected",
+      "passed": true,
+      "conforms": false
+    },
+    {
+      "name": "approval_without_reviewer_rejected",
+      "passed": true,
+      "conforms": false
+    },
+    {
+      "name": "snapshot_without_bytes_digest_rejected",
+      "passed": true,
+      "conforms": false
+    }
+  ]
+}

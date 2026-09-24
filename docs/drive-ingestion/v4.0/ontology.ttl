@@ -1,0 +1,47 @@
+@prefix arch: <urn:arch:v4:> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+<urn:arch:v4> a owl:Ontology ;
+ rdfs:comment "Reference vocabulary; not an IFC or KBimCode conformance claim." .
+arch:SourceArtifact a owl:Class ; rdfs:subClassOf prov:Entity .
+arch:MetadataObservation a owl:Class ; rdfs:subClassOf prov:Entity .
+arch:ContentSnapshot a owl:Class ; rdfs:subClassOf prov:Entity .
+arch:ExtractionRun a owl:Class ; rdfs:subClassOf prov:Activity .
+arch:Evidence a owl:Class ; rdfs:subClassOf prov:Entity .
+arch:RelationshipAssertion a owl:Class ; rdfs:subClassOf prov:Entity .
+arch:LogicalDocument a owl:Class .
+arch:DocumentRevision a owl:Class .
+arch:DrawingSheet a owl:Class .
+arch:IssueEvent a owl:Class .
+arch:SubmissionPackage a owl:Class .
+arch:ReviewRound a owl:Class .
+arch:Project a owl:Class .
+arch:Site a owl:Class .
+arch:Building a owl:Class .
+arch:PermitCase a owl:Class .
+arch:SharedReferenceCollection a owl:Class .
+arch:DrawingElementObservation a owl:Class .
+arch:MeasurementObservation a owl:Class .
+arch:LegalRule a owl:Class .
+arch:RuleSetVersion a owl:Class .
+arch:ComplianceCheck a owl:Class .
+arch:ofArtifact a owl:ObjectProperty .
+arch:observedArtifact a owl:ObjectProperty .
+arch:inputSnapshot a owl:ObjectProperty .
+arch:fromSnapshot a owl:ObjectProperty .
+arch:hasRepresentation a owl:ObjectProperty .
+arch:sameContentAs a owl:ObjectProperty .
+arch:correspondsTo a owl:ObjectProperty .
+arch:supersedes a owl:ObjectProperty .
+arch:evidence a owl:ObjectProperty .
+arch:subject a owl:ObjectProperty .
+arch:predicate a owl:ObjectProperty .
+arch:object a owl:ObjectProperty .
+arch:sha256 a owl:DatatypeProperty .
+arch:locator a owl:DatatypeProperty .
+arch:profileVersion a owl:DatatypeProperty .
+arch:reviewState a owl:DatatypeProperty .
+arch:reviewer a owl:DatatypeProperty .
+arch:reviewedAt a owl:DatatypeProperty .
