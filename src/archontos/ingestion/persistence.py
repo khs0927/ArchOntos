@@ -220,6 +220,48 @@ class CanonicalLawRepository:
 
         source_version_id: UUID = row[0]
 
+        same_date_result = await self.session.execute(
+            text(
+                """
+                SELECT id, version_label
+                FROM source_version
+                WHERE source_id = :source_id
+                  AND id <> :source_version_id
+                  AND effective_from = :effective_from
+                FOR UPDATE
+                """
+            ),
+            {
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+                "effective_from": effective_from,
+            },
+        )
+        same_date_rows = same_date_result.all()
+        if same_date_rows:
+            conflicting_labels = ", ".join(
+                sorted(str(existing.version_label) for existing in same_date_rows)
+            )
+            await self.session.execute(
+                text(
+                    """
+                    INSERT INTO quality_flag(
+                        target_table, target_id, flag_type, severity, message
+                    )
+                    VALUES (
+                        'source_version', :target_id, 'ambiguity', 'high', :message
+                    )
+                    """
+                ),
+                {
+                    "target_id": source_version_id,
+                    "message": (
+                        "Multiple published source versions share effective_from "
+                        f"{effective_from.isoformat()}; existing versions: {conflicting_labels}"
+                    ),
+                },
+            )
+
         previous_result = await self.session.execute(
             text(
                 """
