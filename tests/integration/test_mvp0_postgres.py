@@ -292,6 +292,14 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             assert previous.effective_to == date(2026, 12, 31)
             assert previous.superseded_by == v2.source_version_id
 
+            rule_valid_to = (
+                await session.execute(
+                    text("SELECT valid_to FROM rule_version WHERE id = :id"),
+                    {"id": compiled.rule_version_id},
+                )
+            ).scalar_one()
+            assert rule_valid_to == date(2026, 12, 31)
+
             temporal = await CanonicalQueryRepository(session).temporal_comparison(
                 source_key="lawgo:law:001823",
                 left_date=date(2026, 6, 1),
@@ -299,6 +307,18 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             )
             assert temporal.same_source_version is False
             assert temporal.changed_evidence_keys
+
+        async with session_factory() as session:
+            with pytest.raises(RuleNotExecutableError):
+                async with session.begin():
+                    await CanonicalEvaluationRepository(session).evaluate(
+                        rule_version_id=compiled.rule_version_id,
+                        facts={
+                            "context": {"jurisdiction": "KR"},
+                            "stair": {"direct_count": 3},
+                        },
+                        evaluated_at=datetime(2027, 2, 1, tzinfo=timezone.utc),
+                    )
 
         async with session_factory() as session:
             async with session.begin():
