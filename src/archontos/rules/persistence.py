@@ -202,6 +202,23 @@ class CanonicalRuleCompilerRepository:
             rule_version_id = existing_version_row.id
             status = existing_version_row.status
 
+        if version_created:
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE rule_version
+                    SET status = 'retired'
+                    WHERE rule_id = :rule_id
+                      AND id <> :rule_version_id
+                      AND status <> 'retired'
+                    """
+                ),
+                {
+                    "rule_id": rule_id,
+                    "rule_version_id": rule_version_id,
+                },
+            )
+
         await self.session.execute(
             text(
                 """
