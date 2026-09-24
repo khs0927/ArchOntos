@@ -23,6 +23,7 @@ Implemented foundation:
 - Prometheus-ready metrics endpoint
 - Helm/GitOps deployment skeleton
 - unit tests for rule evaluation, data contracts and query routing
+- official law.go.kr DRF client for current/effective versions, articles and attachments
 
 ## Architecture
 
@@ -67,17 +68,26 @@ Run infrastructure:
 docker compose up -d postgres minio
 ```
 
+Run the ingestion API:
+
+```bash
+uvicorn apps.ingestion:app --reload --port 8001
+```
+
 Run the rule engine API:
 
 ```bash
 uvicorn apps.rule_engine:app --reload --port 8003
 ```
 
-Then open `/docs` or call:
+The law.go.kr adapter uses the official DRF Open API. Configure its approved OC value outside Git:
 
 ```bash
-curl http://localhost:8003/health
+export ARCHONTOS_LAWGO_OC='...'
+curl 'http://localhost:8001/v1/sources/lawgo/search?query=건축법'
 ```
+
+The OC value is intentionally excluded from canonical request metadata and error output.
 
 ## Five MVP-0 query intents
 
