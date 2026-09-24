@@ -18,7 +18,7 @@ from archontos.storage.artifacts import ArtifactStore
 @dataclass(frozen=True, slots=True)
 class NormalizationWorkResult:
     outbox_id: int
-    source_version_id: UUID
+    source_version_id: UUID | None
     status: str
     attempts: int
     evidence_count: int = 0
@@ -60,9 +60,10 @@ class NormalizationOutboxWorker:
                 if row is None:
                     return None
 
-                source_version_id = UUID(str(row.payload_json["source_version_id"]))
+                source_version_id: UUID | None = None
                 attempts = int(row.attempts) + 1
                 try:
+                    source_version_id = UUID(str(row.payload_json["source_version_id"]))
                     async with session.begin_nested():
                         evidence_count = await self._normalize_source_version(
                             session,
@@ -104,7 +105,9 @@ class NormalizationOutboxWorker:
                             ),
                             {
                                 "target_id": source_version_id,
-                                "message": f"normalization failed after retries: {error}",
+                                "message": (
+                                    f"normalization outbox {row.id} failed after retries: {error}"
+                                ),
                             },
                         )
                     return NormalizationWorkResult(
