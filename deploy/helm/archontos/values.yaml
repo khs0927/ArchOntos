@@ -1,0 +1,33 @@
+image:
+  repository: ghcr.io/khs0927/archontos
+  tag: latest
+  pullPolicy: IfNotPresent
+
+services:
+  ingestion:
+    enabled: true
+    module: apps.ingestion:app
+    port: 8001
+  normalization:
+    enabled: true
+    module: apps.normalization:app
+    port: 8002
+  rule-engine:
+    enabled: true
+    module: apps.rule_engine:app
+    port: 8003
+  projection:
+    enabled: true
+    module: apps.projection:app
+    port: 8004
+  action:
+    enabled: true
+    module: apps.action:app
+    port: 8005
+
+env:
+  ARCHONTOS_ENV: production
+  ARCHONTOS_OTEL_ENABLED: "true"
+
+# Database, object storage and secret values are intentionally externalized.
+# Use External Secrets / Vault / platform secret management in production.
