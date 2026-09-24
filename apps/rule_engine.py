@@ -17,12 +17,18 @@ from archontos.query.contracts import (
     SourceEvidenceView,
     TemporalComparisonView,
 )
-from archontos.query.persistence import CanonicalQueryNotFound
+from archontos.query.persistence import CanonicalQueryError, CanonicalQueryNotFound
 from archontos.query.router import Mvp0QueryRouter
 from archontos.query.service import CanonicalQueryService
 from archontos.rules.compiler import RuleCompilationError
-from archontos.rules.contracts import RuleCompilationView
+from archontos.rules.contracts import (
+    CanonicalEvaluationRequest,
+    CanonicalEvaluationView,
+    RuleCompilationView,
+)
 from archontos.rules.engine import evaluate_rule
+from archontos.rules.evaluation import RuleNotExecutableError, RuleVersionNotFoundError
+from archontos.rules.evaluation_service import CanonicalEvaluationService
 from archontos.rules.persistence import (
     AssertionNotApprovedError,
     RuleAssertionNotFoundError,
@@ -43,6 +49,43 @@ async def evaluate(payload: RuleEvaluationRequest):
         return evaluate_rule(payload.rule, payload.facts)
     finally:
         RULE_EVAL_LATENCY.observe(perf_counter() - started)
+
+
+@app.post(
+    "/v1/rules/evaluate/{rule_version_id}",
+    response_model=CanonicalEvaluationView,
+)
+async def evaluate_canonical_rule(
+    rule_version_id: UUID,
+    payload: CanonicalEvaluationRequest,
+):
+    service = CanonicalEvaluationService(session_factory=get_session_factory())
+    started = perf_counter()
+    try:
+        result = await service.evaluate(
+            rule_version_id=rule_version_id,
+            facts=payload.facts,
+            object_version_id=payload.object_version_id,
+            evaluated_at=payload.evaluated_at,
+        )
+    except RuleVersionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuleNotExecutableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        RULE_EVAL_LATENCY.observe(perf_counter() - started)
+
+    return CanonicalEvaluationView(
+        evaluation_id=result.evaluation_id,
+        decision_id=result.decision_id,
+        rule_version_id=result.rule_version_id,
+        applicable=result.applicable,
+        outcome=result.outcome,
+        reason=result.reason,
+        details=result.details,
+        evaluated_at=result.evaluated_at,
+        binding=result.binding,
+    )
 
 
 @app.post("/v1/rules/compile/{assertion_id}", response_model=RuleCompilationView)
@@ -121,6 +164,8 @@ async def query_temporal_comparison(
         )
     except CanonicalQueryNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CanonicalQueryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/v1/query/jurisdiction", response_model=JurisdictionComparisonView)
@@ -130,9 +175,12 @@ async def query_jurisdiction_comparison(
     right_jurisdiction: Annotated[str, Query(min_length=2)],
     at_date: date,
 ):
-    return await _queries().jurisdiction_comparison(
-        rule_title=rule_title,
-        left_jurisdiction=left_jurisdiction,
-        right_jurisdiction=right_jurisdiction,
-        at_date=at_date,
-    )
+    try:
+        return await _queries().jurisdiction_comparison(
+            rule_title=rule_title,
+            left_jurisdiction=left_jurisdiction,
+            right_jurisdiction=right_jurisdiction,
+            at_date=at_date,
+        )
+    except CanonicalQueryError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
