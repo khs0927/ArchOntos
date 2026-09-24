@@ -16,6 +16,10 @@ class CanonicalQueryService:
         async with self.session_factory() as session:
             return await CanonicalQueryRepository(session).source_evidence(rule_version_id)
 
+    async def decision_provenance(self, decision_id: UUID):
+        async with self.session_factory() as session:
+            return await CanonicalQueryRepository(session).decision_provenance(decision_id)
+
     async def authority(self, rule_version_id: UUID):
         async with self.session_factory() as session:
             return await CanonicalQueryRepository(session).authority(rule_version_id)
