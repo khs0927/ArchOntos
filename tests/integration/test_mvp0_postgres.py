@@ -19,6 +19,10 @@ from archontos.ingestion.adapters import (
 from archontos.ingestion.persistence import CanonicalLawRepository
 from archontos.normalization.worker import NormalizationOutboxWorker
 from archontos.query.persistence import CanonicalQueryRepository
+from archontos.rules.evaluation import (
+    CanonicalEvaluationRepository,
+    RuleNotExecutableError,
+)
 from archontos.rules.persistence import CanonicalRuleCompilerRepository
 from archontos.storage.artifacts import LocalArtifactStore
 
@@ -217,6 +221,21 @@ async def test_postgres_mvp0_golden_path(tmp_path):
                 assert compiled.status == "active"
 
         async with session_factory() as session:
+            async with session.begin():
+                evaluation = await CanonicalEvaluationRepository(session).evaluate(
+                    rule_version_id=compiled.rule_version_id,
+                    facts={
+                        "context": {"jurisdiction": "KR"},
+                        "stair": {"direct_count": 1},
+                    },
+                    evaluated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                )
+                assert evaluation.applicable is True
+                assert evaluation.outcome is not None
+                assert evaluation.outcome.value == "FAIL"
+                assert evaluation.decision_id is not None
+
+        async with session_factory() as session:
             queries = CanonicalQueryRepository(session)
             evidence = await queries.source_evidence(compiled.rule_version_id)
             authority = await queries.authority(compiled.rule_version_id)
@@ -294,6 +313,17 @@ async def test_postgres_mvp0_golden_path(tmp_path):
                 )
             ).scalar_one()
             assert status == "suspended"
+
+            with pytest.raises(RuleNotExecutableError):
+                async with session.begin():
+                    await CanonicalEvaluationRepository(session).evaluate(
+                        rule_version_id=compiled.rule_version_id,
+                        facts={
+                            "context": {"jurisdiction": "KR"},
+                            "stair": {"direct_count": 3},
+                        },
+                        evaluated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                    )
 
             outbox_states = (
                 await session.execute(
