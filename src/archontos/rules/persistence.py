@@ -216,6 +216,41 @@ class CanonicalRuleCompilerRepository:
             },
         )
 
+        jurisdiction_result = await self.session.execute(
+            text("SELECT id FROM jurisdiction WHERE code = :code"),
+            {"code": row.jurisdiction_code},
+        )
+        jurisdiction_row = jurisdiction_result.first()
+        if jurisdiction_row is None:
+            raise RulePersistenceError(
+                f"unknown canonical jurisdiction: {row.jurisdiction_code}"
+            )
+
+        await self.session.execute(
+            text(
+                """
+                INSERT INTO applicability(
+                    rule_version_id, jurisdiction_id, condition_expr, priority
+                )
+                VALUES (
+                    :rule_version_id, :jurisdiction_id,
+                    CAST(:condition_expr AS jsonb), 0
+                )
+                ON CONFLICT (rule_version_id, jurisdiction_id, priority)
+                DO UPDATE SET condition_expr = EXCLUDED.condition_expr
+                """
+            ),
+            {
+                "rule_version_id": rule_version_id,
+                "jurisdiction_id": jurisdiction_row.id,
+                "condition_expr": json.dumps(
+                    compiled.logic_expr.get("applicability", {}),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            },
+        )
+
         if version_created:
             event_payload = {
                 "rule_id": str(rule_id),
