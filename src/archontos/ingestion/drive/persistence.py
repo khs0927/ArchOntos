@@ -8,10 +8,11 @@ in this module creates a content artifact, source document, or source version.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
-from typing import Any, Callable, Iterable
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
