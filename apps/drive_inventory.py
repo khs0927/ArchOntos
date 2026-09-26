@@ -1,6 +1,6 @@
 """Run a resumable Drive metadata scan with an existing read-only OAuth token.
 
-Create/apply db/migrations/004_drive_inventory.sql first. The token is supplied
+Create/apply db/migrations/008_drive_inventory.sql first. The token is supplied
 via environment and is never written to the database or printed. This entry
 point does not request or refresh credentials and cannot grant OAuth scopes.
 """

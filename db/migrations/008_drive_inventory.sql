@@ -1,6 +1,10 @@
 -- Google Drive inventory is metadata only. A content artifact/snapshot is created
 -- separately, and only after the corresponding bytes have been captured.
--- Apply after 001_initial.sql (domain_event and outbox_message).
+-- Self-contained: every table it creates is drive_* and every foreign key
+-- points at another drive_* table in this same file. It touches no table that
+-- migrations 002 to 007 alter, so it is numbered 008 and runs last purely to
+-- keep the 004 to 007 range unambiguous. It depends only on 001_initial.sql for
+-- domain_event and outbox_message, and it is idempotent by construction.
 CREATE TABLE IF NOT EXISTS drive_provider_account (
     id uuid PRIMARY KEY,
     provider text NOT NULL DEFAULT 'GOOGLE_DRIVE' CHECK (provider = 'GOOGLE_DRIVE'),

@@ -21,7 +21,7 @@ checkpoint, not an accepted full-Drive inventory or a document parser.
 
 ## Run in a controlled environment
 
-1. Apply `db/migrations/004_drive_inventory.sql` to an existing ArchOntos
+1. Apply `db/migrations/008_drive_inventory.sql` to an existing ArchOntos
    PostgreSQL database after its initial schema. Existing database volumes do
    not apply new SQL migrations automatically. Back up and verify migration
    execution before running the scanner.
