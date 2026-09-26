@@ -8,6 +8,7 @@ metadata can contain private document names and authorization information.
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
@@ -48,6 +49,17 @@ class DriveAPIError(DriveAdapterError):
         super().__init__(message)
 
 
+class DriveAuthError(DriveAdapterError):
+    """No usable access token could be produced.
+
+    Deliberately not a ``DriveAPIError``: ``DriveAPIError`` with a null status
+    reports ``retryable`` True, which would classify a credential problem as a
+    transient provider fault and spend the retry budget on it.
+    """
+
+    retryable = False
+
+
 class DriveResponseError(DriveAdapterError):
     """A successful response was incomplete or had an invalid shape."""
 
@@ -67,7 +79,7 @@ class GoogleDriveAdapter:
         base_url: str = "https://www.googleapis.com/drive/v3",
         max_retries: int = 3,
         retry_backoff: float = 0.5,
-        max_retry_after: float = 60.0,
+        max_delay: float = 60.0,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.client = client
@@ -75,20 +87,49 @@ class GoogleDriveAdapter:
         self.base_url = base_url.rstrip("/")
         if max_retries < 0:
             raise ValueError("max_retries must not be negative")
-        if retry_backoff < 0:
-            raise ValueError("retry_backoff must not be negative")
+        if not math.isfinite(retry_backoff) or retry_backoff < 0:
+            raise ValueError("retry_backoff must be a finite, non-negative number")
+        if not math.isfinite(max_delay) or max_delay < retry_backoff:
+            # max_delay must be able to hold the first backoff, otherwise the
+            # cap truncates the schedule to a flat line and stops meaning
+            # "ceiling".
+            raise ValueError("max_delay must be finite and at least retry_backoff")
         self.max_retries = max_retries
         self.retry_backoff = retry_backoff
-        self.max_retry_after = max_retry_after
+        self.max_delay = max_delay
         # Injectable so the retry policy is testable without real delays.
         self._sleep = sleep if sleep is not None else asyncio.sleep
 
+    def _current_token(self) -> str:
+        """Return a usable bearer token or raise, without leaking the cause.
+
+        The provider is called inside a try so that whatever its exception
+        carries (a token endpoint response body, an echoed Authorization
+        header) cannot reach an error message. A provider that returns an empty
+        or non-string value raises rather than sending a literal
+        ``Bearer None``, which Drive would answer with a 401 that masks the
+        real cause as an authentication failure.
+        """
+        try:
+            source = self.access_token() if callable(self.access_token) else self.access_token
+        except Exception:
+            # Deliberately broad and deliberately detail-free: the provider owns
+            # whatever the failure carries, and that may be a token endpoint
+            # response body. Chaining with `from None` keeps it out of the
+            # rendered traceback.
+            raise DriveAuthError("Drive access token could not be obtained") from None
+        if not isinstance(source, str) or not source.strip():
+            raise DriveAuthError("A nonempty Drive access token is required")
+        return source
+
     def _retry_delay(self, attempt: int, headers: httpx.Headers | None) -> float:
-        """Seconds to wait before the next attempt.
+        """Seconds to wait before the next attempt, bounded by ``max_delay``.
 
         A ``Retry-After`` header wins over the exponential schedule because the
-        provider's own quota window is more accurate than a guess, but it is
-        capped so a hostile or buggy header cannot stall the run indefinitely.
+        provider's own quota window is more accurate than a guess, but the
+        header is capped so a buggy one cannot stall the run. The exponential
+        schedule is capped by the same ceiling; without that, a large
+        ``max_retries`` produced a delay measured in days.
         """
         if headers is not None:
             retry_after = headers.get("Retry-After")
@@ -97,17 +138,23 @@ class GoogleDriveAdapter:
                     seconds = float(retry_after)
                 except ValueError:
                     seconds = -1.0
-                if seconds >= 0:
-                    return min(seconds, self.max_retry_after)
-        return self.retry_backoff * (2**attempt)
+                if math.isfinite(seconds) and seconds >= 0:
+                    return min(seconds, self.max_delay)
+        return min(self.retry_backoff * (2**attempt), self.max_delay)
 
-    async def _get(self, path: str, params: dict[str, str | int]) -> dict[str, Any]:
-        token = self.access_token() if callable(self.access_token) else self.access_token
-        if not isinstance(token, str) or not token.strip():
-            raise DriveAdapterError("A nonempty Drive access token is required")
-
+    async def _get(
+        self,
+        path: str,
+        params: dict[str, str | int],
+        *,
+        retryable: bool = True,
+    ) -> dict[str, Any]:
         attempt = 0
         while True:
+            # Resolved outside the request try on purpose: a credential problem
+            # must not consume the transient-failure retry budget.
+            token = self._current_token()
+
             failure: DriveAPIError | None = None
             headers: httpx.Headers | None = None
             try:
@@ -124,14 +171,10 @@ class GoogleDriveAdapter:
                 headers = response.headers
                 failure = DriveAPIError(response.status_code)
 
-            # A 403 or 404 will not become a success on a second attempt, so
-            # only genuinely transient failures consume the retry budget.
-            if not failure.retryable or attempt >= self.max_retries:
+            if not retryable or not failure.retryable or attempt >= self.max_retries:
                 raise failure from None
             await self._sleep(self._retry_delay(attempt, headers))
             attempt += 1
-            # The owner may have rotated the token while we were backing off.
-            token = self.access_token() if callable(self.access_token) else self.access_token
 
         try:
             data = response.json()
@@ -196,7 +239,11 @@ class GoogleDriveAdapter:
         params: dict[str, str | int] = {"supportsAllDrives": "true", "fields": "startPageToken"}
         if drive_id is not None:
             params["driveId"] = drive_id
-        data = await self._get("changes/startPageToken", params)
+        # Not retried on purpose. Every call mints a fresh, later cursor, so a
+        # retry after a 429 or 503 would silently advance the baseline point and
+        # skip every change in the intervening window. Losing a transient
+        # failure is recoverable; losing that window is not.
+        data = await self._get("changes/startPageToken", params, retryable=False)
         token = self._token(data, "startPageToken", required=True)
         assert token is not None
         return token

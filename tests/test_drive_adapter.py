@@ -6,7 +6,9 @@ import httpx
 import pytest
 
 from archontos.ingestion.drive.adapter import (
+    DriveAdapterError,
     DriveAPIError,
+    DriveAuthError,
     DriveResponseError,
     GoogleDriveAdapter,
 )
@@ -229,32 +231,6 @@ def test_invalid_corpus_rejected_before_network_call():
         run(scenario())
 
 
-def _adapter_over(responses, **kwargs):
-    """Build an adapter over a scripted response list and record its sleeps."""
-    seen = []
-    calls = {"n": 0}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        index = calls["n"]
-        calls["n"] += 1
-        item = responses[min(index, len(responses) - 1)]
-        if isinstance(item, Exception):
-            raise item
-        return item
-
-    async def scenario():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            adapter = GoogleDriveAdapter(
-                client,
-                "bearer",
-                sleep=_record_sleep(seen),
-                **kwargs,
-            )
-            return await adapter.list_drives(), calls["n"], list(seen)
-
-    return scenario
-
-
 def _record_sleep(seen):
     async def sleep(seconds):
         seen.append(seconds)
@@ -262,19 +238,75 @@ def _record_sleep(seen):
     return sleep
 
 
+def _adapter_over(responses, token="bearer", **kwargs):
+    """Build an adapter over a scripted response list and record its sleeps.
+
+    The response list is consumed strictly: running past the end raises, so a
+    loop that retries more times than the test scripted fails instead of
+    silently replaying the last entry. The counters live outside the coroutine
+    so a caller can assert on them from inside a ``pytest.raises`` block.
+    """
+    seen: list[float] = []
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        index = calls["n"]
+        calls["n"] += 1
+        if index >= len(responses):
+            raise AssertionError(
+                f"adapter made request {index + 1} but only {len(responses)} were scripted"
+            )
+        item = responses[index]
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = GoogleDriveAdapter(client, token, sleep=_record_sleep(seen), **kwargs)
+            return await adapter.list_drives()
+
+    scenario.calls = calls
+    scenario.sleeps = seen
+    return scenario
+
+
+def _start_token_over(responses, token="bearer", **kwargs):
+    """Same as _adapter_over but drives start_page_token, which must not retry."""
+    seen: list[float] = []
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        index = calls["n"]
+        calls["n"] += 1
+        if index >= len(responses):
+            raise AssertionError(
+                f"adapter made request {index + 1} but only {len(responses)} were scripted"
+            )
+        return responses[index]
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = GoogleDriveAdapter(client, token, sleep=_record_sleep(seen), **kwargs)
+            return await adapter.start_page_token("user")
+
+    scenario.calls = calls
+    scenario.sleeps = seen
+    return scenario
+
+
 def test_transient_503_is_retried_and_the_scan_survives():
-    """A 503 must consume the retry budget instead of killing the whole corpus."""
     scenario = _adapter_over(
         [
             httpx.Response(503, json={"error": "backendError"}),
             httpx.Response(200, json={"drives": [{"id": "drive-A", "name": "A"}]}),
         ]
     )
-    drives, calls, sleeps = run(scenario())
+    drives = run(scenario())
 
-    assert calls == 2
+    assert scenario.calls["n"] == 2
     assert [d["id"] for d in drives] == ["drive-A"]
-    assert sleeps == [0.5]
+    assert scenario.sleeps == [0.5]
 
 
 def test_transient_429_is_retried_and_then_recovers():
@@ -284,9 +316,9 @@ def test_transient_429_is_retried_and_then_recovers():
             httpx.Response(200, json={"drives": []}),
         ]
     )
-    drives, calls, _sleeps = run(scenario())
+    drives = run(scenario())
 
-    assert calls == 2
+    assert scenario.calls["n"] == 2
     assert drives == []
 
 
@@ -297,110 +329,199 @@ def test_transport_failure_is_retried_because_retryable_is_true_for_none_status(
             httpx.Response(200, json={"drives": []}),
         ]
     )
-    _drives, calls, _sleeps = run(scenario())
+    run(scenario())
+    assert scenario.calls["n"] == 2
 
-    assert calls == 2
 
-
-def test_retry_budget_is_bounded_and_the_final_error_still_carries_its_status():
+def test_retry_budget_is_bounded_and_its_own_comment_holds():
+    # Three retries means one initial attempt plus exactly three more.
     scenario = _adapter_over(
-        [httpx.Response(503, json={"error": "backendError"})],
-        max_retries=2,
+        [httpx.Response(503, json={"error": "backendError"})] * 4,
+        max_retries=3,
     )
     with pytest.raises(DriveAPIError) as caught:
         run(scenario())
 
-    # one initial attempt plus two retries, then give up
+    assert scenario.calls["n"] == 4
+    assert len(scenario.sleeps) == 3
     assert caught.value.status_code == 503
     assert caught.value.retryable is True
 
 
+def test_retry_budget_of_zero_makes_exactly_one_attempt():
+    scenario = _adapter_over([httpx.Response(503, json={"error": "backendError"})], max_retries=0)
+    with pytest.raises(DriveAPIError) as caught:
+        run(scenario())
+
+    assert scenario.calls["n"] == 1
+    assert scenario.sleeps == []
+    assert caught.value.status_code == 503
+
+
 def test_non_retryable_403_fails_immediately_without_sleeping():
+    # A 403 would not become a success on a second attempt, so the default
+    # budget of three retries must not be spent on it.
     scenario = _adapter_over([httpx.Response(403, json={"error": "insufficientFilePermissions"})])
     with pytest.raises(DriveAPIError) as caught:
         run(scenario())
 
+    assert scenario.calls["n"] == 1
+    assert scenario.sleeps == []
     assert caught.value.status_code == 403
     assert caught.value.retryable is False
 
 
 def test_retry_backoff_grows_exponentially():
+    scenario = _adapter_over(
+        [httpx.Response(503, json={"error": "backendError"})] * 4, max_retries=3
+    )
     with pytest.raises(DriveAPIError):
-        run(
-            _adapter_over(
-                [httpx.Response(503, json={"error": "backendError"})],
-                max_retries=3,
-                retry_backoff=0.25,
-            )()
-        )
+        run(scenario())
+    assert scenario.sleeps == [0.5, 1.0, 2.0]
 
-    seen: list[float] = []
 
-    async def scenario():
-        async with httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda _: httpx.Response(503, json={}))
-        ) as client:
-            adapter = GoogleDriveAdapter(
-                client,
-                "bearer",
-                max_retries=3,
-                retry_backoff=0.25,
-                sleep=_record_sleep(seen),
-            )
-            with pytest.raises(DriveAPIError):
-                await adapter.list_drives()
-
-    run(scenario())
-    assert seen == [0.25, 0.5, 1.0]
+def test_exponential_backoff_is_capped_by_max_delay():
+    # Without the cap this schedule would reach 64 seconds and keep going.
+    scenario = _adapter_over(
+        [httpx.Response(503, json={"error": "backendError"})] * 5,
+        max_retries=4,
+        retry_backoff=1.0,
+        max_delay=3.0,
+    )
+    with pytest.raises(DriveAPIError):
+        run(scenario())
+    assert scenario.sleeps == [1.0, 2.0, 3.0, 3.0]
 
 
 def test_retry_after_header_overrides_the_backoff_schedule_and_is_capped():
     scenario = _adapter_over(
         [
-            httpx.Response(429, headers={"Retry-After": "7"}, json={"error": "rate"}),
+            httpx.Response(429, headers={"Retry-After": "2"}, json={"error": "rate"}),
             httpx.Response(200, json={"drives": []}),
         ]
     )
-    _drives, _calls, sleeps = run(scenario())
-    assert sleeps == [7.0]
+    run(scenario())
+    assert scenario.sleeps == [2.0]
 
     capped = _adapter_over(
         [
             httpx.Response(429, headers={"Retry-After": "99999"}, json={"error": "rate"}),
             httpx.Response(200, json={"drives": []}),
         ],
-        max_retry_after=30.0,
+        max_delay=30.0,
     )
-    _drives, _calls, capped_sleeps = run(capped())
-    assert capped_sleeps == [30.0]
+    run(capped())
+    assert capped.sleeps == [30.0]
 
 
-def test_malformed_retry_after_falls_back_to_the_backoff_schedule():
+@pytest.mark.parametrize(
+    "header", ["soon", "Wed, 21 Oct 2015 07:28:00 GMT", "", "inf", "nan", "-5"]
+)
+def test_unusable_retry_after_falls_back_to_the_backoff_schedule(header):
     scenario = _adapter_over(
         [
-            httpx.Response(429, headers={"Retry-After": "soon"}, json={"error": "rate"}),
+            httpx.Response(429, headers={"Retry-After": header}, json={"error": "rate"}),
             httpx.Response(200, json={"drives": []}),
-        ],
-        retry_backoff=0.5,
+        ]
     )
-    _drives, _calls, sleeps = run(scenario())
-    assert sleeps == [0.5]
+    run(scenario())
+    assert scenario.sleeps == [0.5]
+
+
+@pytest.mark.parametrize("bad", [{"max_delay": -1.0}, {"max_delay": 0.1, "retry_backoff": 0.5}])
+def test_nonsensical_delay_configuration_is_refused(bad):
+    """A negative ceiling, or one below the first backoff, must not construct."""
+    with pytest.raises(ValueError):
+        GoogleDriveAdapter(
+            httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))),
+            "bearer",
+            **bad,
+        )
+
+
+def test_token_provider_returning_none_does_not_send_a_bearer_none_header():
+    """The regression that motivated _current_token.
+
+    A provider that rotates to None mid-retry used to send the literal header
+    ``Bearer None``. Drive answers 401, which is not retryable, so the caller
+    saw an authentication failure instead of the real cause.
+    """
+    sent_headers = []
+    values = iter(["good-token", None])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent_headers.append(request.headers["Authorization"])
+        return httpx.Response(503, json={"error": "backendError"})
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = GoogleDriveAdapter(
+                client,
+                lambda: next(values),
+                max_retries=3,
+                sleep=_record_sleep([]),
+            )
+            return await adapter.list_drives()
+
+    with pytest.raises(DriveAuthError):
+        run(scenario())
+    # The first request carried the real token; no request was sent with None.
+    assert sent_headers == ["Bearer good-token"]
+
+
+def test_token_provider_returning_an_empty_string_is_refused():
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))
+        ) as client:
+            adapter = GoogleDriveAdapter(client, lambda: "   ")
+            return await adapter.list_drives()
+
+    with pytest.raises(DriveAuthError):
+        run(scenario())
+
+
+def test_a_raising_token_provider_is_wrapped_and_its_detail_is_not_reported():
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json={}))
+        ) as client:
+
+            def boom():
+                raise RuntimeError("token endpoint body: secret-refresh-payload")
+
+            adapter = GoogleDriveAdapter(client, boom)
+            return await adapter.list_drives()
+
+    with pytest.raises(DriveAuthError) as caught:
+        run(scenario())
+
+    assert "secret-refresh-payload" not in str(caught.value)
+    assert isinstance(caught.value, DriveAdapterError)
+
+
+def test_an_auth_failure_is_not_retryable():
+    """A credential problem must not spend the transient-failure budget."""
+    assert DriveAuthError.retryable is False
+
+
+def test_start_page_token_is_never_retried():
+    """Each call mints a later cursor, so a retry would skip a change window.
+
+    Retrying this endpoint after a 429 or 503 would advance the baseline point
+    and silently drop every change in between, which is worse than failing.
+    """
+    scenario = _start_token_over([httpx.Response(503, json={"error": "backendError"})])
+    with pytest.raises(DriveAPIError):
+        run(scenario())
+    assert scenario.calls["n"] == 1
+    assert scenario.sleeps == []
 
 
 def test_retries_do_not_leak_the_token_or_the_response_body():
-    scenario = _adapter_over([httpx.Response(503, json={"error": "private-name-and-token"})])
+    scenario = _adapter_over([httpx.Response(503, json={"error": "private-name-and-token"})] * 4)
     with pytest.raises(DriveAPIError) as caught:
         run(scenario())
 
     assert "private-name" not in str(caught.value)
     assert "bearer" not in str(caught.value)
-
-
-def test_retry_budget_of_zero_disables_retrying_entirely():
-    scenario = _adapter_over(
-        [httpx.Response(503, json={"error": "backendError"})],
-        max_retries=0,
-    )
-    with pytest.raises(DriveAPIError) as caught:
-        run(scenario())
-    assert caught.value.status_code == 503
