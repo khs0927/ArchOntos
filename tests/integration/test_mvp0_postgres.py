@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -111,7 +111,7 @@ async def _persist_version(
             enforcement_date=enforcement_date.strftime("%Y%m%d"),
             required_count=required_count,
         ),
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
     )
     artifact = await store.put_envelope(envelope)
     body = LawGoKrAdapter.parse_body(envelope)
@@ -228,7 +228,7 @@ async def test_postgres_mvp0_golden_path(tmp_path):
                         "context": {"jurisdiction": "KR"},
                         "stair": {"direct_count": 1},
                     },
-                    evaluated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    evaluated_at=datetime(2026, 6, 1, tzinfo=UTC),
                 )
                 assert evaluation.applicable is True
                 assert evaluation.outcome is not None
@@ -317,7 +317,7 @@ async def test_postgres_mvp0_golden_path(tmp_path):
                             "context": {"jurisdiction": "KR"},
                             "stair": {"direct_count": 3},
                         },
-                        evaluated_at=datetime(2027, 2, 1, tzinfo=timezone.utc),
+                        evaluated_at=datetime(2027, 2, 1, tzinfo=UTC),
                     )
 
         async with session_factory() as session:
@@ -363,7 +363,7 @@ async def test_postgres_mvp0_golden_path(tmp_path):
                             "context": {"jurisdiction": "KR"},
                             "stair": {"direct_count": 3},
                         },
-                        evaluated_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+                        evaluated_at=datetime(2026, 6, 2, tzinfo=UTC),
                     )
 
         async with session_factory() as session:

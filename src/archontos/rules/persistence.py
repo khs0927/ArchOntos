@@ -151,8 +151,7 @@ class CanonicalRuleCompilerRepository:
             rule_id = existing_rule.scalar_one()
 
         version_label = (
-            f"{row.source_version_label}:assertion:{assertion_id}:"
-            f"{compiled.compiler_version}"
+            f"{row.source_version_label}:assertion:{assertion_id}:{compiled.compiler_version}"
         )
         inserted_version = await self.session.execute(
             text(
@@ -241,9 +240,7 @@ class CanonicalRuleCompilerRepository:
         )
         jurisdiction_row = jurisdiction_result.first()
         if jurisdiction_row is None:
-            raise RulePersistenceError(
-                f"unknown canonical jurisdiction: {row.jurisdiction_code}"
-            )
+            raise RulePersistenceError(f"unknown canonical jurisdiction: {row.jurisdiction_code}")
 
         await self.session.execute(
             text(

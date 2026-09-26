@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
@@ -151,7 +151,7 @@ class LawGoKrAdapter:
                 endpoint=endpoint,
                 params=safe_params,
                 payload=payload,
-                fetched_at=datetime.now(timezone.utc),
+                fetched_at=datetime.now(UTC),
             )
         except httpx.HTTPStatusError as exc:
             raise SourceProtocolError(

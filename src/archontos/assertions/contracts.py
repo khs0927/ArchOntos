@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 from archontos.domain.enums import ReviewStatus
 
-
 InterpreterMethod = Literal["structured-parser", "llm", "human"]
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -185,7 +185,8 @@ class NormalizationOutboxWorker:
         if digest != source_row.content_hash:
             raise RuntimeError(
                 "artifact integrity mismatch for "
-                f"source_version {source_version_id}: expected {source_row.content_hash}, got {digest}"
+                f"source_version {source_version_id}: "
+                f"expected {source_row.content_hash}, got {digest}"
             )
 
         params = {
@@ -197,7 +198,7 @@ class NormalizationOutboxWorker:
             endpoint=source_row.storage_uri,
             params={key: value for key, value in params.items() if value},
             payload=payload,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
         )
         body = LawGoKrAdapter.parse_body(envelope)
         units = self.normalizer.normalize(body)

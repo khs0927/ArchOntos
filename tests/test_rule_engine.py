@@ -1,3 +1,5 @@
+import pytest
+
 from archontos.domain.enums import DecisionOutcome
 from archontos.rules.engine import RuleEvaluationError, evaluate_rule
 
@@ -102,3 +104,38 @@ def test_missing_exception_fact_routes_to_review():
     assert result.applicable is True
     assert result.outcome is DecisionOutcome.REVIEW
     assert result.reason == "Insufficient facts to evaluate rule exceptions"
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {"and": [{"var": "stair.direct_count"}, {"var": "stair.missing"}]},
+        {"all": [{"var": "stair.direct_count"}, {"var": "stair.missing"}]},
+        {"or": [{"var": "stair.direct_count"}, {"var": "stair.missing"}]},
+        {"any": [{"var": "stair.direct_count"}, {"var": "stair.missing"}]},
+        {"not": {"var": "stair.missing"}},
+    ],
+    ids=["and", "all", "or", "any", "not"],
+)
+def test_logical_operators_fail_closed_on_a_missing_fact(condition):
+    """A logical operator must not silently resolve an absent fact.
+
+    The comparison operators already have coverage for this. The logical
+    operators (`and`/`all`/`or`/`any`/`not`) were reachable with a missing
+    operand and no test exercised them, so a regression that turned a missing
+    fact into a plain ``False`` would have shipped as a silent FAIL.
+    """
+    rule = {
+        "rule": {
+            "if": condition,
+            "then": {"PASS": {"reason": "satisfied"}},
+            "else": {"FAIL": {"reason": "not satisfied"}},
+        },
+    }
+    result = evaluate_rule(rule, {"stair": {"direct_count": 2}})
+
+    assert result.applicable is True
+    assert result.outcome is DecisionOutcome.REVIEW
+    # The reason is what distinguishes "we could not evaluate" from a real
+    # FAIL, so it is asserted rather than just the absence of a verdict.
+    assert result.reason == "Insufficient facts to evaluate rule"

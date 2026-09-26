@@ -78,9 +78,7 @@ def test_normalization_is_deterministic_and_keys_are_unique():
 def test_attachment_relative_link_is_preserved_as_official_absolute_url():
     units = LawEvidenceNormalizer().normalize(Body())
     attachment = units[-1]
-    assert attachment.locator["pdf_url"] == (
-        "https://www.law.go.kr/LSW/flDownload.do?flSeq=123"
-    )
+    assert attachment.locator["pdf_url"] == ("https://www.law.go.kr/LSW/flDownload.do?flSeq=123")
     assert attachment.text_snippet == "용도별 건축물의 종류"
 
 

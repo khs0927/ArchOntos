@@ -10,7 +10,6 @@ from archontos.assertions.review import (
 )
 from archontos.domain.enums import ReviewStatus
 
-
 EVIDENCE_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 

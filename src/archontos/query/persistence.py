@@ -84,9 +84,7 @@ class CanonicalQueryRepository:
         )
         rows = result.all()
         if not rows:
-            raise CanonicalQueryNotFound(
-                f"rule version or provenance not found: {rule_version_id}"
-            )
+            raise CanonicalQueryNotFound(f"rule version or provenance not found: {rule_version_id}")
 
         first = rows[0]
         evidence = [
@@ -343,8 +341,7 @@ class CanonicalQueryRepository:
             )
         if len(rows) > 1:
             raise CanonicalQueryError(
-                "ambiguous effective source versions for "
-                f"{source_key!r} at {at_date.isoformat()}"
+                f"ambiguous effective source versions for {source_key!r} at {at_date.isoformat()}"
             )
         return rows[0]
 
@@ -360,10 +357,7 @@ class CanonicalQueryRepository:
             ),
             {"source_version_id": source_version_id},
         )
-        return {
-            row.evidence_key: row.normalized_text_hash
-            for row in result.all()
-        }
+        return {row.evidence_key: row.normalized_text_hash for row in result.all()}
 
     async def _rule_at(
         self,

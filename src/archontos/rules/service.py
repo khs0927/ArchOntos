@@ -17,6 +17,6 @@ class RuleCompilationService:
     async def compile_assertion(self, assertion_id: UUID) -> PersistedCompiledRule:
         async with self.session_factory() as session:
             async with session.begin():
-                return await CanonicalRuleCompilerRepository(
-                    session
-                ).compile_approved_assertion(assertion_id)
+                return await CanonicalRuleCompilerRepository(session).compile_approved_assertion(
+                    assertion_id
+                )

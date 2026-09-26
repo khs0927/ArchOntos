@@ -20,7 +20,9 @@ class LawNormalizationService:
         self.session_factory = session_factory
         self.normalizer = LawEvidenceNormalizer()
 
-    async def normalize_body(self, *, source_version_id: UUID, body: object) -> LawNormalizationResult:
+    async def normalize_body(
+        self, *, source_version_id: UUID, body: object
+    ) -> LawNormalizationResult:
         units = self.normalizer.normalize(body)
         async with self.session_factory() as session:
             async with session.begin():

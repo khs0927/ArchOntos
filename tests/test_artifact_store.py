@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -13,7 +13,7 @@ def test_local_artifact_store_is_content_addressed_and_idempotent(tmp_path):
         endpoint="https://www.law.go.kr/DRF/lawService.do",
         params={"target": "law", "MST": "123"},
         payload={"법령": {"법령키": "123"}},
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
     )
     store = LocalArtifactStore(tmp_path)
     first = asyncio.run(store.put_envelope(envelope))

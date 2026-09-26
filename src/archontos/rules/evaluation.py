@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -52,9 +52,9 @@ class CanonicalEvaluationRepository:
         object_version_id: UUID | None = None,
         evaluated_at: datetime | None = None,
     ) -> PersistedEvaluation:
-        effective_evaluated_at = evaluated_at or datetime.now(timezone.utc)
+        effective_evaluated_at = evaluated_at or datetime.now(UTC)
         if effective_evaluated_at.tzinfo is None:
-            effective_evaluated_at = effective_evaluated_at.replace(tzinfo=timezone.utc)
+            effective_evaluated_at = effective_evaluated_at.replace(tzinfo=UTC)
 
         rule_result = await self.session.execute(
             text(

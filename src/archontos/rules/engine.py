@@ -72,9 +72,7 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
         evaluate_expr(item, facts) if isinstance(item, dict) else _resolve(item, facts)
         for item in args_list
     ]
-    if op in {"==", "!=", ">=", "<=", ">", "<", "in"} and any(
-        value is None for value in resolved
-    ):
+    if op in {"==", "!=", ">=", "<=", ">", "<", "in"} and any(value is None for value in resolved):
         raise MissingRuleFactError(f"missing operand for rule operator: {op}")
 
     if op == "==":

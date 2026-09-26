@@ -112,6 +112,7 @@ def _locator_key(locator: dict[str, Any]) -> str:
     kind = str(locator["kind"])
     return f"lawgo:{kind}:{digest}"
 
+
 @dataclass(frozen=True, slots=True)
 class LegalEvidenceUnit:
     evidence_key: str
@@ -190,9 +191,7 @@ class LawEvidenceNormalizer:
             "article_title": _string(article.get("조문제목")),
             "article_effective_date": _string(article.get("조문시행일자")),
         }
-        units = [
-            self._unit({**common, "kind": "article"}, _string(article.get("조문내용")))
-        ]
+        units = [self._unit({**common, "kind": "article"}, _string(article.get("조문내용")))]
 
         paragraphs = _children(article, "항", "항단위")
         for paragraph_index, paragraph in enumerate(paragraphs, start=1):
@@ -202,9 +201,7 @@ class LawEvidenceNormalizer:
             for subparagraph_index, subparagraph in enumerate(
                 _children(article, "호", "호단위"), start=1
             ):
-                units.extend(
-                    self._normalize_subparagraph(common, subparagraph, subparagraph_index)
-                )
+                units.extend(self._normalize_subparagraph(common, subparagraph, subparagraph_index))
 
         return units
 
@@ -217,17 +214,13 @@ class LawEvidenceNormalizer:
             "paragraph_no": _string(paragraph.get("항번호")),
         }
         units = [
-            self._unit(
-                {**paragraph_common, "kind": "paragraph"}, _string(paragraph.get("항내용"))
-            )
+            self._unit({**paragraph_common, "kind": "paragraph"}, _string(paragraph.get("항내용")))
         ]
         for subparagraph_index, subparagraph in enumerate(
             _children(paragraph, "호", "호단위"), start=1
         ):
             units.extend(
-                self._normalize_subparagraph(
-                    paragraph_common, subparagraph, subparagraph_index
-                )
+                self._normalize_subparagraph(paragraph_common, subparagraph, subparagraph_index)
             )
         return units
 

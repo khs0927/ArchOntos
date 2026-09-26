@@ -67,9 +67,7 @@ class CanonicalAssertionRepository:
         )
         evidence_row = evidence_result.first()
         if evidence_row is None:
-            raise EvidenceNotFoundError(
-                f"unknown evidence_span_id: {payload.evidence_span_id}"
-            )
+            raise EvidenceNotFoundError(f"unknown evidence_span_id: {payload.evidence_span_id}")
 
         source_version_id: UUID = evidence_row[0]
         key = assertion_key(
@@ -238,9 +236,7 @@ class CanonicalAssertionRepository:
             },
         )
 
-        linked_rule_status = (
-            "active" if decision is ReviewStatus.APPROVED else "suspended"
-        )
+        linked_rule_status = "active" if decision is ReviewStatus.APPROVED else "suspended"
         await self.session.execute(
             text(
                 """
