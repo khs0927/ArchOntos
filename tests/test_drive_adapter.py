@@ -35,7 +35,9 @@ def test_list_drives_follows_empty_intermediate_page_and_refreshes_token():
 
     assert [d["id"] for d in run(scenario())] == ["drive-A", "drive-B"]
     assert [r.headers["Authorization"] for r in requests] == [
-        "Bearer private-first", "Bearer private-second", "Bearer private-third"
+        "Bearer private-first",
+        "Bearer private-second",
+        "Bearer private-third",
     ]
     assert all(r.url.params["fields"].startswith("nextPageToken,drives(") for r in requests)
     assert all(r.url.params["pageSize"] == "100" for r in requests)
@@ -58,14 +60,20 @@ def test_corpus_tokens_file_pages_and_removed_changes_preserve_page_cursors():
             return httpx.Response(200, json={"files": [], "nextPageToken": "second"})
         if path.endswith("/changes"):
             if params["pageToken"] == "initial":
-                return httpx.Response(200, json={
-                    "changes": [{"fileId": "A", "removed": True}],
-                    "nextPageToken": "next",
-                })
-            return httpx.Response(200, json={
-                "changes": [{"fileId": "B", "removed": False, "file": {"id": "B"}}],
-                "newStartPageToken": "stable",
-            })
+                return httpx.Response(
+                    200,
+                    json={
+                        "changes": [{"fileId": "A", "removed": True}],
+                        "nextPageToken": "next",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "changes": [{"fileId": "B", "removed": False, "file": {"id": "B"}}],
+                    "newStartPageToken": "stable",
+                },
+            )
         raise AssertionError(f"Unexpected path: {path}")
 
     async def scenario():
@@ -147,9 +155,11 @@ def test_invalid_change_pages_are_rejected(payload):
 
 def test_http_errors_hide_response_content_and_bearer_token():
     async def scenario():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(
-            lambda _: httpx.Response(403, json={"error": "private-file-name and token"})
-        )) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(403, json={"error": "private-file-name and token"})
+            )
+        ) as client:
             return await GoogleDriveAdapter(client, "bearer-secret").list_drives()
 
     with pytest.raises(DriveAPIError) as caught:
@@ -162,9 +172,11 @@ def test_http_errors_hide_response_content_and_bearer_token():
 
 def test_non_json_success_is_not_treated_as_an_empty_inventory():
     async def scenario():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, text="<html>not an API response</html>")
-        )) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, text="<html>not an API response</html>")
+            )
+        ) as client:
             return await GoogleDriveAdapter(client, "secret").list_drives()
 
     with pytest.raises(DriveResponseError, match="invalid JSON"):
@@ -173,12 +185,19 @@ def test_non_json_success_is_not_treated_as_an_empty_inventory():
 
 def test_shared_drive_change_without_file_id_keeps_its_drive_identity():
     async def scenario():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, json={
-                "changes": [{"changeType": "drive", "driveId": "shared-A", "removed": True}],
-                "newStartPageToken": "after",
-            })
-        )) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    json={
+                        "changes": [
+                            {"changeType": "drive", "driveId": "shared-A", "removed": True}
+                        ],
+                        "newStartPageToken": "after",
+                    },
+                )
+            )
+        ) as client:
             return await GoogleDriveAdapter(client, "secret").list_changes_page("before")
 
     assert run(scenario())["changes"] == [
@@ -208,3 +227,180 @@ def test_invalid_corpus_rejected_before_network_call():
 
     with pytest.raises(ValueError, match="drive_id"):
         run(scenario())
+
+
+def _adapter_over(responses, **kwargs):
+    """Build an adapter over a scripted response list and record its sleeps."""
+    seen = []
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        index = calls["n"]
+        calls["n"] += 1
+        item = responses[min(index, len(responses) - 1)]
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = GoogleDriveAdapter(
+                client,
+                "bearer",
+                sleep=_record_sleep(seen),
+                **kwargs,
+            )
+            return await adapter.list_drives(), calls["n"], list(seen)
+
+    return scenario
+
+
+def _record_sleep(seen):
+    async def sleep(seconds):
+        seen.append(seconds)
+
+    return sleep
+
+
+def test_transient_503_is_retried_and_the_scan_survives():
+    """A 503 must consume the retry budget instead of killing the whole corpus."""
+    scenario = _adapter_over(
+        [
+            httpx.Response(503, json={"error": "backendError"}),
+            httpx.Response(200, json={"drives": [{"id": "drive-A", "name": "A"}]}),
+        ]
+    )
+    drives, calls, sleeps = run(scenario())
+
+    assert calls == 2
+    assert [d["id"] for d in drives] == ["drive-A"]
+    assert sleeps == [0.5]
+
+
+def test_transient_429_is_retried_and_then_recovers():
+    scenario = _adapter_over(
+        [
+            httpx.Response(429, json={"error": "rateLimitExceeded"}),
+            httpx.Response(200, json={"drives": []}),
+        ]
+    )
+    drives, calls, _sleeps = run(scenario())
+
+    assert calls == 2
+    assert drives == []
+
+
+def test_transport_failure_is_retried_because_retryable_is_true_for_none_status():
+    scenario = _adapter_over(
+        [
+            httpx.ConnectError("connection reset"),
+            httpx.Response(200, json={"drives": []}),
+        ]
+    )
+    _drives, calls, _sleeps = run(scenario())
+
+    assert calls == 2
+
+
+def test_retry_budget_is_bounded_and_the_final_error_still_carries_its_status():
+    scenario = _adapter_over(
+        [httpx.Response(503, json={"error": "backendError"})],
+        max_retries=2,
+    )
+    with pytest.raises(DriveAPIError) as caught:
+        run(scenario())
+
+    # one initial attempt plus two retries, then give up
+    assert caught.value.status_code == 503
+    assert caught.value.retryable is True
+
+
+def test_non_retryable_403_fails_immediately_without_sleeping():
+    scenario = _adapter_over([httpx.Response(403, json={"error": "insufficientFilePermissions"})])
+    with pytest.raises(DriveAPIError) as caught:
+        run(scenario())
+
+    assert caught.value.status_code == 403
+    assert caught.value.retryable is False
+
+
+def test_retry_backoff_grows_exponentially():
+    with pytest.raises(DriveAPIError):
+        run(
+            _adapter_over(
+                [httpx.Response(503, json={"error": "backendError"})],
+                max_retries=3,
+                retry_backoff=0.25,
+            )()
+        )
+
+    seen: list[float] = []
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(503, json={}))
+        ) as client:
+            adapter = GoogleDriveAdapter(
+                client,
+                "bearer",
+                max_retries=3,
+                retry_backoff=0.25,
+                sleep=_record_sleep(seen),
+            )
+            with pytest.raises(DriveAPIError):
+                await adapter.list_drives()
+
+    run(scenario())
+    assert seen == [0.25, 0.5, 1.0]
+
+
+def test_retry_after_header_overrides_the_backoff_schedule_and_is_capped():
+    scenario = _adapter_over(
+        [
+            httpx.Response(429, headers={"Retry-After": "7"}, json={"error": "rate"}),
+            httpx.Response(200, json={"drives": []}),
+        ]
+    )
+    _drives, _calls, sleeps = run(scenario())
+    assert sleeps == [7.0]
+
+    capped = _adapter_over(
+        [
+            httpx.Response(429, headers={"Retry-After": "99999"}, json={"error": "rate"}),
+            httpx.Response(200, json={"drives": []}),
+        ],
+        max_retry_after=30.0,
+    )
+    _drives, _calls, capped_sleeps = run(capped())
+    assert capped_sleeps == [30.0]
+
+
+def test_malformed_retry_after_falls_back_to_the_backoff_schedule():
+    scenario = _adapter_over(
+        [
+            httpx.Response(429, headers={"Retry-After": "soon"}, json={"error": "rate"}),
+            httpx.Response(200, json={"drives": []}),
+        ],
+        retry_backoff=0.5,
+    )
+    _drives, _calls, sleeps = run(scenario())
+    assert sleeps == [0.5]
+
+
+def test_retries_do_not_leak_the_token_or_the_response_body():
+    scenario = _adapter_over([httpx.Response(503, json={"error": "private-name-and-token"})])
+    with pytest.raises(DriveAPIError) as caught:
+        run(scenario())
+
+    assert "private-name" not in str(caught.value)
+    assert "bearer" not in str(caught.value)
+
+
+def test_retry_budget_of_zero_disables_retrying_entirely():
+    scenario = _adapter_over(
+        [httpx.Response(503, json={"error": "backendError"})],
+        max_retries=0,
+    )
+    with pytest.raises(DriveAPIError) as caught:
+        run(scenario())
+    assert caught.value.status_code == 503

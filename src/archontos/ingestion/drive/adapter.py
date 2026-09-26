@@ -7,11 +7,11 @@ metadata can contain private document names and authorization information.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 import httpx
-
 
 Corpus = Literal["user", "drive"]
 
@@ -42,7 +42,8 @@ class DriveAPIError(DriveAdapterError):
         self.retryable = status_code is None or status_code in (408, 429) or status_code >= 500
         message = (
             "Drive API transport failure"
-            if status_code is None else f"Drive API HTTP {status_code}"
+            if status_code is None
+            else f"Drive API HTTP {status_code}"
         )
         super().__init__(message)
 
@@ -64,25 +65,74 @@ class GoogleDriveAdapter:
         access_token: str | Callable[[], str],
         *,
         base_url: str = "https://www.googleapis.com/drive/v3",
+        max_retries: int = 3,
+        retry_backoff: float = 0.5,
+        max_retry_after: float = 60.0,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.client = client
         self.access_token = access_token
         self.base_url = base_url.rstrip("/")
+        if max_retries < 0:
+            raise ValueError("max_retries must not be negative")
+        if retry_backoff < 0:
+            raise ValueError("retry_backoff must not be negative")
+        self.max_retries = max_retries
+        self.retry_backoff = retry_backoff
+        self.max_retry_after = max_retry_after
+        # Injectable so the retry policy is testable without real delays.
+        self._sleep = sleep if sleep is not None else asyncio.sleep
+
+    def _retry_delay(self, attempt: int, headers: httpx.Headers | None) -> float:
+        """Seconds to wait before the next attempt.
+
+        A ``Retry-After`` header wins over the exponential schedule because the
+        provider's own quota window is more accurate than a guess, but it is
+        capped so a hostile or buggy header cannot stall the run indefinitely.
+        """
+        if headers is not None:
+            retry_after = headers.get("Retry-After")
+            if retry_after:
+                try:
+                    seconds = float(retry_after)
+                except ValueError:
+                    seconds = -1.0
+                if seconds >= 0:
+                    return min(seconds, self.max_retry_after)
+        return self.retry_backoff * (2**attempt)
 
     async def _get(self, path: str, params: dict[str, str | int]) -> dict[str, Any]:
         token = self.access_token() if callable(self.access_token) else self.access_token
         if not isinstance(token, str) or not token.strip():
             raise DriveAdapterError("A nonempty Drive access token is required")
-        try:
-            response = await self.client.get(
-                f"{self.base_url}/{path}",
-                params=params,
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            )
-        except httpx.RequestError:
-            raise DriveAPIError() from None
-        if not 200 <= response.status_code < 300:
-            raise DriveAPIError(response.status_code)
+
+        attempt = 0
+        while True:
+            failure: DriveAPIError | None = None
+            headers: httpx.Headers | None = None
+            try:
+                response = await self.client.get(
+                    f"{self.base_url}/{path}",
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                )
+            except httpx.RequestError:
+                failure = DriveAPIError()
+            else:
+                if 200 <= response.status_code < 300:
+                    break
+                headers = response.headers
+                failure = DriveAPIError(response.status_code)
+
+            # A 403 or 404 will not become a success on a second attempt, so
+            # only genuinely transient failures consume the retry budget.
+            if not failure.retryable or attempt >= self.max_retries:
+                raise failure from None
+            await self._sleep(self._retry_delay(attempt, headers))
+            attempt += 1
+            # The owner may have rotated the token while we were backing off.
+            token = self.access_token() if callable(self.access_token) else self.access_token
+
         try:
             data = response.json()
         except ValueError:
