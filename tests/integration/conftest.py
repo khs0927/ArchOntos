@@ -54,9 +54,15 @@ async def mvp0_db(
 ) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], str]]:
     """Yield a session factory bound to a fresh migrated schema, then drop it.
 
-    The factory is built with a per-connection ``search_path`` so that every
-    statement the production code issues resolves inside the throwaway schema
-    and never touches shared tables.
+    Every table the migrations create lands in the throwaway schema, and the
+    suite reads and writes only those. ``public`` stays on the search path
+    because migration 001 creates pgvector once and then declares an
+    ``embedding vector(1536)`` column, whose type only resolves if the
+    extension's schema is reachable. The consequence of that is stated rather
+    than glossed over: an unqualified statement naming a table the migrations
+    did not create would silently resolve in ``public`` instead of failing.
+    ``_assert_schema_is_populated`` closes that hole by failing the fixture if
+    any expected table is missing.
     """
     schema = f"archontos_test_{uuid4().hex}"
     admin = await asyncpg.connect(postgres_dsn)
@@ -66,6 +72,8 @@ async def mvp0_db(
         await admin.execute(f'SET search_path TO "{schema}", public')
         for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
             await admin.execute(migration.read_text(encoding="utf-8"))
+
+        await _assert_schema_is_populated(admin, schema)
 
         engine = create_async_engine(
             sqlalchemy_url(postgres_dsn),
@@ -81,6 +89,43 @@ async def mvp0_db(
             await admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         finally:
             await admin.close()
+
+
+EXPECTED_TABLES = (
+    "source_document",
+    "source_version",
+    "artifact",
+    "evidence_span",
+    "assertion",
+    "assertion_review",
+    "rule",
+    "rule_version",
+    "rule_assertion",
+    "evaluation",
+    "decision",
+    "outbox_message",
+    "domain_event",
+    "quality_flag",
+)
+
+
+async def _assert_schema_is_populated(admin, schema: str) -> None:
+    """Fail loudly if a migration did not produce every table the suite needs.
+
+    Without this, a migration that silently no-ops leaves the schema partial
+    and the next unqualified statement falls through to ``public``, which would
+    both pass the test and touch the shared database.
+    """
+    missing = []
+    for table in EXPECTED_TABLES:
+        found = await admin.fetchval("SELECT to_regclass($1)", f"{schema}.{table}")
+        if found is None:
+            missing.append(table)
+    if missing:
+        raise AssertionError(
+            f"migrations did not create {missing} in the throwaway schema; "
+            "refusing to run against the shared public schema"
+        )
 
 
 # --- shared fixture builders -------------------------------------------------
