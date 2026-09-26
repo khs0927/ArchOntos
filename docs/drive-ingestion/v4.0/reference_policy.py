@@ -1,4 +1,5 @@
 """Offline reference rules, not a deployed Drive worker or legal engine."""
+
 import hashlib
 import json
 import math
@@ -17,8 +18,9 @@ def archive_member_id(snapshot_id, ordinal, path):
     normalized = "/".join(p for p in parts if p not in ("", "."))
     if not normalized:
         raise ValueError("empty member path")
-    key = json.dumps([snapshot_id, ordinal, normalized], ensure_ascii=False,
-                     separators=(",", ":")).encode()
+    key = json.dumps(
+        [snapshot_id, ordinal, normalized], ensure_ascii=False, separators=(",", ":")
+    ).encode()
     return "urn:arch:archive-member:" + hashlib.sha256(key).hexdigest()
 
 
@@ -45,8 +47,7 @@ def to_metres(value, insunits):
     return value * scales[insunits]
 
 
-def minimum_check(lower, upper, threshold, *, applicable,
-                  measurement_verified, uncertainty_kind):
+def minimum_check(lower, upper, threshold, *, applicable, measurement_verified, uncertainty_kind):
     """Numerical candidate only. Never a professional approval."""
     if applicable is False:
         return "NOT_APPLICABLE"
@@ -57,8 +58,13 @@ def minimum_check(lower, upper, threshold, *, applicable,
     if uncertainty_kind != "DETERMINISTIC_BOUND":
         return "NEEDS_REVIEW"
     vals = (lower, upper, threshold)
-    if any(not isinstance(v, (int, float)) or isinstance(v, bool)
-           or not math.isfinite(v) for v in vals) or lower > upper:
+    if (
+        any(
+            not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v)
+            for v in vals
+        )
+        or lower > upper
+    ):
         return "UNMEASURABLE"
     if lower >= threshold:
         return "PASS_CANDIDATE"
