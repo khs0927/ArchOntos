@@ -35,17 +35,26 @@ async def run(account_namespace: str, max_pages: int) -> None:
         )
         results = await service.sync_all()
     # File names, IDs, bearer tokens, and page tokens are deliberately omitted.
-    print(json.dumps({"corpora": len(results),
-                      "baseline_pages": sum(x.baseline_pages for x in results),
-                      "change_pages": sum(x.change_pages for x in results),
-                      "observations": sum(x.observed_files for x in results),
-                      "removal_events": sum(x.removed_events for x in results)}))
+    print(
+        json.dumps(
+            {
+                "corpora": len(results),
+                "baseline_pages": sum(x.baseline_pages for x in results),
+                "change_pages": sum(x.change_pages for x in results),
+                "observations": sum(x.observed_files for x in results),
+                "removal_events": sum(x.removed_events for x in results),
+            }
+        )
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inventory Drive metadata in ArchOntos")
-    parser.add_argument("--account-namespace", required=True,
-                        help="Stable opaque account identifier, not an email address")
+    parser.add_argument(
+        "--account-namespace",
+        required=True,
+        help="Stable opaque account identifier, not an email address",
+    )
     parser.add_argument("--max-pages", type=int, default=100_000)
     arguments = parser.parse_args()
     asyncio.run(run(arguments.account_namespace, arguments.max_pages))

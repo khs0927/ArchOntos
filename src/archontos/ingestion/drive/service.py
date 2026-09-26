@@ -44,8 +44,14 @@ class CorpusResult:
 
 
 class DriveInventoryService:
-    def __init__(self, *, adapter: Any, repository: Any, account_namespace: str,
-                 max_pages_per_corpus: int = 100_000) -> None:
+    def __init__(
+        self,
+        *,
+        adapter: Any,
+        repository: Any,
+        account_namespace: str,
+        max_pages_per_corpus: int = 100_000,
+    ) -> None:
         if not account_namespace:
             raise ValueError("account_namespace is required")
         self.adapter = adapter
@@ -59,9 +65,7 @@ class DriveInventoryService:
             token = await self.adapter.start_page_token(
                 "drive" if drive_id else "user", drive_id=drive_id
             )
-            checkpoint = await self.repository.begin_scan(
-                self.account_namespace, corpus_key, token
-            )
+            checkpoint = await self.repository.begin_scan(self.account_namespace, corpus_key, token)
         return checkpoint
 
     async def _sync_corpus(self, corpus_key: str, drive_id: str | None) -> CorpusResult:
@@ -85,8 +89,12 @@ class DriveInventoryService:
             items = [_snapshot(raw) for raw in page["files"]]
             next_token = page.get("nextPageToken")
             checkpoint = await self.repository.commit_baseline_page(
-                self.account_namespace, corpus_key, page_token, next_token,
-                items, is_last=not next_token,
+                self.account_namespace,
+                corpus_key,
+                page_token,
+                next_token,
+                items,
+                is_last=not next_token,
             )
             baseline_pages += 1
             observed_files += len(items)
@@ -108,9 +116,15 @@ class DriveInventoryService:
                     changed_drive = raw.get("driveId")
                     if not isinstance(changed_drive, str) or not changed_drive:
                         raise ValueError("Drive-level change has no driveId")
-                    changes.append(DriveChange(file_id=None, removed=bool(raw.get("removed")),
-                                               item=None, change_type="drive",
-                                               drive_id=changed_drive))
+                    changes.append(
+                        DriveChange(
+                            file_id=None,
+                            removed=bool(raw.get("removed")),
+                            item=None,
+                            change_type="drive",
+                            drive_id=changed_drive,
+                        )
+                    )
                     continue
                 file_id = raw.get("fileId")
                 if not isinstance(file_id, str) or not file_id:
@@ -121,15 +135,21 @@ class DriveInventoryService:
                 item = None if removed else _snapshot(raw["file"])
                 if item is not None and item.id != file_id:
                     raise ValueError("Drive change fileId differs from file.id")
-                changes.append(DriveChange(file_id=file_id, removed=removed, item=item,
-                                           drive_id=raw.get("driveId")))
+                changes.append(
+                    DriveChange(
+                        file_id=file_id, removed=removed, item=item, drive_id=raw.get("driveId")
+                    )
+                )
             next_token = page.get("nextPageToken")
             terminal_token = page.get("newStartPageToken")
             if not next_token and not terminal_token:
                 raise ValueError("Drive terminal change page has no newStartPageToken")
             checkpoint = await self.repository.commit_change_page(
-                self.account_namespace, corpus_key, token,
-                next_token or terminal_token, changes,
+                self.account_namespace,
+                corpus_key,
+                token,
+                next_token or terminal_token,
+                changes,
                 is_last=not next_token,
             )
             change_pages += 1
@@ -138,8 +158,9 @@ class DriveInventoryService:
             if not next_token:
                 break
 
-        return CorpusResult(corpus_key, baseline_pages, change_pages,
-                            observed_files, removed_events)
+        return CorpusResult(
+            corpus_key, baseline_pages, change_pages, observed_files, removed_events
+        )
 
     async def sync_all(self) -> list[CorpusResult]:
         # Capture the user feed before discovering shared drives, then capture

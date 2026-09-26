@@ -6,7 +6,6 @@ import pytest
 
 from archontos.ingestion.adapters import LawGoKrAdapter, SourceAuthenticationError
 
-
 SEARCH_PAYLOAD = {
     "LawSearch": {
         "target": "law",
