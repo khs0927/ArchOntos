@@ -74,8 +74,40 @@ Implemented through the canonical MVP-0 read path:
 - approved-only safe rule compilation
 - rule lifecycle: approved -> active, contested/rejected -> suspended
 - compiled applicability persistence
+- evaluation and decision persistence bound to an explicit `rule_version`
 - canonical query executors for source evidence, authority, applicability, temporal comparison and jurisdiction comparison
+
+Not yet implemented, and not covered by the golden path:
+
+- projection workers; the outbox has no drainer outside normalization and
+  `src/archontos/projection/base.py` still raises `NotImplementedError`
+- `action` / `action_run` persistence and enforcement of the approval gate
+- API authentication and identity propagation (P3 in `docs/ROADMAP.md`)
+
+## Verification status
+
+The release ticket below was executed against a real PostgreSQL instance
+(`pgvector/pgvector:0.8.6-pg18`, the same image CI uses):
+
+- migrations 001-007 applied in order into a throwaway schema
+- the Golden Scenario end to end: ingest -> artifact -> source_version -> outbox
+  -> normalization -> evidence -> assertion -> review -> compile -> evaluate
+  -> decision -> query -> provenance traversal
+- step 10, idempotent reprocess of an identical fixture, asserted separately in
+  `tests/integration/test_mvp0_idempotency.py`: no new rows, no new outbox
+  work, unchanged evidence identity, cleared conflict flag
+- the same-MST/different-bytes case asserted against the real contract, which
+  is a recorded `conflict=True` plus a high-severity `quality_flag`, not an
+  exception
+
+Result: `pytest` passes 85 tests with the database configured, and degrades to
+80 passed / 5 skipped without one. `ruff check .` and `ruff format --check` are
+clean. This is local evidence; hosted CI has not run successfully yet because
+the GitHub Actions billing block is unresolved.
 
 ## Next implementation ticket
 
-Run migrations 001-006 against a real PostgreSQL instance and execute the MVP-0 Golden Scenario end to end. The release gate is not complete until PostgreSQL integration, migration replay, idempotent re-ingestion, provenance traversal and query API responses are verified against the same database.
+Provision a drainer for the outbox topics that normalization does not own, and
+persist `action` / `action_run` so that `requires_approval` is enforced rather
+than merely returned. Both are prerequisites for the P3 release gate in
+`ops/RELEASE-CHECKLIST.md`, which is still entirely unchecked.
