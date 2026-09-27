@@ -202,6 +202,27 @@ class CanonicalRuleCompilerRepository:
             existing_version_row = existing_version.one()
             rule_version_id = existing_version_row.id
             status = existing_version_row.status
+            if status == "suspended":
+                # The conflict check is keyed on version identity, not logic, so a
+                # re-compile of a version that a later review suspended hits it
+                # and returned the stale status as a success. Suspension is driven
+                # by the assertion review lifecycle, and this method already
+                # refuses anything that is not APPROVED, so reaching here means
+                # the assertion is approved again and the version is executable
+                # again. Leaving it suspended made a re-approved rule
+                # permanently non-executable until someone re-called the review
+                # endpoint.
+                await self.session.execute(
+                    text(
+                        """
+                        UPDATE rule_version
+                        SET status = 'active'
+                        WHERE id = :rule_version_id
+                        """
+                    ),
+                    {"rule_version_id": rule_version_id},
+                )
+                status = "active"
 
         if version_created:
             await self.session.execute(
