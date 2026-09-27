@@ -105,6 +105,6 @@ def test_the_job_wraps_those_exit_codes() -> None:
     # The job must branch on the code, not simply run the tool and inherit it,
     # so a usage error cannot be reported as drift or silently ignored.
     assert "set +e" in text
-    assert "case \"$code\" in" in text
+    assert 'case "$code" in' in text
     assert "::error::" in text
     assert "regen" in text, "the job must say how to fix drift"
