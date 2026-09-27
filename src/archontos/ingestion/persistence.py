@@ -96,6 +96,28 @@ class CanonicalLawRepository:
         if effective_from is None:
             raise CanonicalizationError("official law version is missing an enforcement date")
 
+        # Cross-check the fetched body against the law it is filed under, before
+        # any write. `body.law_id` and `body.mst` fall back to the request
+        # parameters, so comparing those would be true by construction for any
+        # body the provider returns, including a wrong one. The declared fields
+        # carry only what the response stated. A provider that declares nothing
+        # is unverifiable, not matching.
+        if body.declared_law_id is not None and body.declared_law_id != item.law_id:
+            raise CanonicalizationError(
+                "fetched body declares a different law_id than the law it was requested for"
+            )
+        if body.declared_mst is not None and body.declared_mst != item.mst:
+            raise CanonicalizationError(
+                "fetched body declares a different 연혁 revision than the one requested"
+            )
+        if body.declared_mst is None and item.mst:
+            # The requested mst was known at call time. Without a declared
+            # revision there is no version identity beyond a date, and storing
+            # it would file an unknown 연혁 under a known label.
+            raise CanonicalizationError(
+                "fetched body does not declare its 연혁 revision, so it cannot be verified"
+            )
+
         source_key = law_source_key(item)
         version_label = law_version_label(item)
         document_type = classify_document_type(item.law_type or body.law_type)
