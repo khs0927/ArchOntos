@@ -69,7 +69,13 @@ class NormalizationOutboxWorker:
                             session,
                             source_version_id,
                         )
-                except Exception as exc:
+                # BLE001: deliberate. This is the worker's transaction boundary.
+                # The savepoint rolled back, the error is written to
+                # outbox_message.last_error, the row flips to pending or failed
+                # at max_attempts, and a high-severity quality_flag is recorded.
+                # A narrower tuple would let an unexpected exception escape with
+                # the outbox row left claimed, which is the worse outcome.
+                except Exception as exc:  # noqa: BLE001
                     error = str(exc)[:1000]
                     status = "failed" if attempts >= self.max_attempts else "pending"
                     await session.execute(
