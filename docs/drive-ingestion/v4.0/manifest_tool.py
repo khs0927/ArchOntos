@@ -141,8 +141,19 @@ def main() -> int:
         print(f"MISSING  {rel}")
     for rel in unlisted:
         print(f"UNLISTED {rel}")
+
+    # Guidance has to be per case. regen adopts new files but refuses deletions,
+    # so telling a user to run it for a MISSING entry would send them into a
+    # command that errors out.
     if unlisted:
         print("add them with: python manifest_tool.py regen")
+    if changed:
+        print("restore the file, or accept the change with: python manifest_tool.py regen")
+    if missing:
+        print(
+            "regen refuses a deletion on purpose; if the removal is intended, "
+            "delete these lines from MANIFEST.sha256 by hand"
+        )
 
     # An unlisted file is the one drift class regen exists to fix, so it has to
     # fail the gate too rather than being printed and discarded.

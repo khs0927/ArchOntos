@@ -10,6 +10,33 @@ permissions:
   contents: read
 
 jobs:
+  manifest:
+    # Its own job, not a step in `test`: the tool is stdlib only and must not be
+    # gated behind `pip install -e '.[dev]'`, and a required check should fail
+    # for its own reason rather than because an unrelated install broke.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify the Drive contract manifest
+        working-directory: docs/drive-ingestion/v4.0
+        # Exit contract: 0 clean, 1 drift (changed, missing or unlisted),
+        # 2 usage error. No continue-on-error, and no path filter: filtering
+        # this to the docs tree would create a way to change the gate or the
+        # files it guards without it running.
+        run: |
+          set +e
+          output=$(python manifest_tool.py check 2>&1)
+          code=$?
+          echo "$output"
+          case "$code" in
+            0) echo "manifest ok" ;;
+            1) echo "::error::docs/drive-ingestion/v4.0 manifest drift; fix with: python manifest_tool.py regen"; exit 1 ;;
+            *) echo "::error::manifest_tool.py failed unexpectedly (exit $code)"; exit 2 ;;
+          esac
+
   test:
     runs-on: ubuntu-latest
     steps:
