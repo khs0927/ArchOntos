@@ -111,14 +111,25 @@ class DriveInventoryRepository:
     async def _corpus(
         self, session: Any, account_namespace: str, corpus_key: str, *, lock: bool = False
     ) -> Any:
-        locking = "FOR UPDATE OF c" if lock else ""
-        result = await session.execute(
-            text(f"""
+        # Two whole statements rather than one with a fragment interpolated, so
+        # no value is ever concatenated into SQL text. Every caller-supplied
+        # value stays a bound parameter.
+        statement = (
+            text("""
             SELECT c.*, a.id AS account_id
               FROM drive_corpus c JOIN drive_provider_account a ON a.id = c.account_id
              WHERE a.account_namespace = :account_namespace AND c.corpus_key = :corpus_key
-             {locking}
-        """),
+             FOR UPDATE OF c
+        """)
+            if lock
+            else text("""
+            SELECT c.*, a.id AS account_id
+              FROM drive_corpus c JOIN drive_provider_account a ON a.id = c.account_id
+             WHERE a.account_namespace = :account_namespace AND c.corpus_key = :corpus_key
+        """)
+        )
+        result = await session.execute(
+            statement,
             {"account_namespace": account_namespace, "corpus_key": corpus_key},
         )
         row = result.mappings().first()

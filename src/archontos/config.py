@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The development placeholder. It is also what docker-compose.yml ships, and it
 # is the value that must never survive into a non-dev environment.
-DEV_SECRET_PLACEHOLDER = "change-me"
+DEV_SECRET_PLACEHOLDER = "change-me"  # noqa: S105 - documented dev value, refused outside dev
 
 
 class Settings(BaseSettings):

@@ -17,7 +17,9 @@ class ReviewStatus(StrEnum):
 
 
 class DecisionOutcome(StrEnum):
-    PASS = "PASS"
+    # S105: this is a decision outcome, not a credential. The rule matches the
+    # word PASS inside a string.
+    PASS = "PASS"  # noqa: S105
     FAIL = "FAIL"
     REVIEW = "REVIEW"
 

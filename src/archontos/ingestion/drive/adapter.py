@@ -112,7 +112,7 @@ class GoogleDriveAdapter:
         """
         try:
             source = self.access_token() if callable(self.access_token) else self.access_token
-        except Exception:
+        except Exception:  # noqa: BLE001 - deliberate: the provider owns the detail
             # Deliberately broad and deliberately detail-free: the provider owns
             # whatever the failure carries, and that may be a token endpoint
             # response body. Chaining with `from None` keeps it out of the
@@ -244,8 +244,12 @@ class GoogleDriveAdapter:
         # skip every change in the intervening window. Losing a transient
         # failure is recoverable; losing that window is not.
         data = await self._get("changes/startPageToken", params, retryable=False)
+        # _token(..., required=True) already raises, so this is a type narrowing
+        # for the declared return, not a runtime check. An assert would vanish
+        # under python -O and assert has no business in the request path.
         token = self._token(data, "startPageToken", required=True)
-        assert token is not None
+        if token is None:  # pragma: no cover - unreachable while required=True
+            raise DriveResponseError("Drive did not return a startPageToken")
         return token
 
     async def list_files_page(
