@@ -57,11 +57,22 @@ def compile_requirement(
         raise RuleCompilationError(f"invalid executable requirement payload: {exc}") from exc
 
     applicability = dict(spec.applicability)
-    requested_jurisdictions = applicability.get("jurisdiction")
-    if requested_jurisdictions:
-        if not isinstance(requested_jurisdictions, list):
-            raise RuleCompilationError("applicability.jurisdiction must be a list")
-        if jurisdiction_code not in requested_jurisdictions:
+    if "jurisdiction" in applicability:
+        # A present key is an assertion about scope, so it is held to a shape.
+        # An absent key means the author did not assert one and the canonical
+        # jurisdiction is filled in below. An empty list is not the same thing:
+        # it says "resolved to nothing" or "not yet resolved", and treating it as
+        # absent silently widens the rule to a jurisdiction nobody asserted.
+        requested = applicability["jurisdiction"]
+        if not isinstance(requested, list) or not requested:
+            raise RuleCompilationError(
+                "applicability.jurisdiction must be a non-empty list when present"
+            )
+        if not all(isinstance(entry, str) and entry for entry in requested):
+            # A bare string would also pass a containment test by substring, so
+            # "KR" would appear to match "KR-11".
+            raise RuleCompilationError("applicability.jurisdiction entries must be strings")
+        if jurisdiction_code not in requested:
             raise RuleCompilationError(
                 "assertion applicability jurisdiction conflicts with source jurisdiction"
             )
