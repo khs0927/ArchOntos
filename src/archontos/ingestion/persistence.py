@@ -57,34 +57,6 @@ def law_version_label(item: LawSearchItem) -> str:
     raise CanonicalizationError("law.go.kr item has neither MST nor enforcement date")
 
 
-class CanonicalLawRepository:
-    """PostgreSQL writes for an immutable official-law source version."""
-
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def _upsert_artifact(self, artifact: ArtifactRef) -> UUID:
-        result = await self.session.execute(
-            text(
-                """
-                INSERT INTO artifact(artifact_type, mime, storage_uri, content_hash, byte_size)
-                VALUES (:artifact_type, :mime, :storage_uri, :content_hash, :byte_size)
-                ON CONFLICT (storage_uri, content_hash)
-                DO UPDATE SET byte_size = EXCLUDED.byte_size
-                RETURNING id
-                """
-            ),
-            {
-                "artifact_type": artifact.artifact_type,
-                "mime": artifact.mime,
-                "storage_uri": artifact.storage_uri,
-                "content_hash": artifact.content_hash,
-                "byte_size": artifact.byte_size,
-            },
-        )
-        return result.scalar_one()
-
-
 def assert_body_matches_request(item: LawSearchItem, body: LawBody) -> None:
     """Refuse a fetched body that cannot be verified against the law it is filed under.
 
@@ -113,6 +85,35 @@ def assert_body_matches_request(item: LawSearchItem, body: LawBody) -> None:
         raise CanonicalizationError(
             "fetched body does not declare its 연혁 revision, so it cannot be verified"
         )
+
+
+class CanonicalLawRepository:
+    """PostgreSQL writes for an immutable official-law source version."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def _upsert_artifact(self, artifact: ArtifactRef) -> UUID:
+        result = await self.session.execute(
+            text(
+                """
+                INSERT INTO artifact(artifact_type, mime, storage_uri, content_hash, byte_size)
+                VALUES (:artifact_type, :mime, :storage_uri, :content_hash, :byte_size)
+                ON CONFLICT (storage_uri, content_hash)
+                DO UPDATE SET byte_size = EXCLUDED.byte_size
+                RETURNING id
+                """
+            ),
+            {
+                "artifact_type": artifact.artifact_type,
+                "mime": artifact.mime,
+                "storage_uri": artifact.storage_uri,
+                "content_hash": artifact.content_hash,
+                "byte_size": artifact.byte_size,
+            },
+        )
+        return result.scalar_one()
+
 
     async def persist_law_version(
         self,
