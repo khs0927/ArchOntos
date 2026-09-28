@@ -114,7 +114,6 @@ class CanonicalLawRepository:
         )
         return result.scalar_one()
 
-
     async def persist_law_version(
         self,
         *,

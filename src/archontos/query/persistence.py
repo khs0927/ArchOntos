@@ -280,6 +280,8 @@ class CanonicalQueryRepository:
             removed_evidence_keys=list(diff.removed),
             changed_evidence_keys=list(diff.changed),
             unchanged_evidence_count=diff.unchanged_count,
+            indeterminate_evidence_keys=list(diff.indeterminate),
+            comparison_completeness=diff.completeness,
         )
 
     async def jurisdiction_comparison(

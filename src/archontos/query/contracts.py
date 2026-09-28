@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -93,6 +93,11 @@ class TemporalComparisonView(BaseModel):
     removed_evidence_keys: list[str] = Field(default_factory=list)
     changed_evidence_keys: list[str] = Field(default_factory=list)
     unchanged_evidence_count: int = 0
+    # Keys present in both versions where at least one side produced no text
+    # hash, so the comparison could not be made. Present so a caller can
+    # distinguish "no evidence changed" from "we could not tell".
+    indeterminate_evidence_keys: list[str] = Field(default_factory=list)
+    comparison_completeness: Literal["complete", "partial"] = "complete"
 
 
 class JurisdictionRuleSnapshot(BaseModel):
