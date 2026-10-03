@@ -48,6 +48,7 @@ def test_legal_assertion_can_reference_stable_ontology_subject():
         interpreter_method="human",
         applies_to=[subject],
     )
+    assert assertion.applies_to[0].schema == "archontos-aec-subject-ref/1"
     assert assertion.applies_to[0].project_id == "P-001"
     assert assertion.applies_to[0].object_id == "door-1"
     assert "document_id" not in assertion.applies_to[0].model_dump()
