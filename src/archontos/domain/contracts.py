@@ -35,9 +35,36 @@ class EvidenceSpanContract(BaseModel):
     extraction_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
+class AecSubjectRef(BaseModel):
+    """Stable reference from a legal assertion to an Ontology AEC subject."""
+
+    project_id: str = Field(min_length=1)
+    object_id: str | None = Field(default=None, min_length=1)
+    source_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_byte_revision_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    parser_revision_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    locator: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_revision_identity(self):
+        revision_fields = (
+            self.source_id,
+            self.source_byte_revision_id,
+            self.parser_revision_id,
+        )
+        if any(value is not None for value in revision_fields) and not all(
+            value is not None for value in revision_fields
+        ):
+            raise ValueError(
+                "source_id, source_byte_revision_id and parser_revision_id must be supplied together"
+            )
+        return self
+
+
 class AssertionContract(BaseModel):
     natural_language: str = Field(min_length=1)
     structured_payload: dict[str, Any] = Field(default_factory=dict)
+    applies_to: list[AecSubjectRef] = Field(default_factory=list, max_length=10_000)
     interpreter_method: Literal["structured-parser", "llm", "human"]
     interpretation_confidence: float | None = Field(default=None, ge=0, le=1)
     review_status: ReviewStatus = ReviewStatus.UNREVIEWED
