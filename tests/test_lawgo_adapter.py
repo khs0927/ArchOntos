@@ -4,7 +4,7 @@ from datetime import date
 import httpx
 import pytest
 
-from archontos.ingestion.adapters import LawGoKrAdapter, SourceAuthenticationError
+from archontos.ingestion.adapters import (\n    LawGoKrAdapter,\n    SourceAuthenticationError,\n)
 
 
 SEARCH_PAYLOAD = {
