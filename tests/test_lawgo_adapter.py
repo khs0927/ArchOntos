@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from datetime import date
 
 import httpx
@@ -7,6 +8,7 @@ import pytest
 from archontos.ingestion.adapters import (
     LawGoKrAdapter,
     SourceAuthenticationError,
+    SourceProtocolError,
 )
 
 SEARCH_PAYLOAD = {
@@ -145,5 +147,59 @@ def test_effective_body_passes_effective_date():
         assert seen["target"] == "eflaw"
         assert seen["efYd"] == "20250101"
         assert seen["JO"] == "001000"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("selector", ["MST", "ID"])
+def test_body_rejects_response_identity_mismatch(selector):
+    async def run():
+        async with _mock_client(BODY_PAYLOAD) as client:
+            adapter = LawGoKrAdapter(oc="secret-oc", client=client)
+            with pytest.raises(SourceProtocolError, match="different " + selector):
+                if selector == "MST":
+                    await adapter.fetch_law(mst="different-version")
+                else:
+                    await adapter.fetch_law(law_id="different-law")
+
+    asyncio.run(run())
+
+
+def test_body_does_not_fabricate_missing_identity_from_request():
+    payload = deepcopy(BODY_PAYLOAD)
+    del payload["법령"]["법령키"]
+    del payload["법령"]["기본정보"]["법령일련번호"]
+    del payload["법령"]["기본정보"]["법령ID"]
+
+    async def run():
+        async with _mock_client(payload) as client:
+            adapter = LawGoKrAdapter(oc="secret-oc", client=client)
+            with pytest.raises(SourceProtocolError, match="missing requested MST"):
+                await adapter.fetch_law(mst="999001", law_id="001823")
+
+    asyncio.run(run())
+
+
+def test_effective_body_rejects_response_version_mismatch():
+    async def run():
+        async with _mock_client(BODY_PAYLOAD) as client:
+            adapter = LawGoKrAdapter(oc="secret-oc", client=client)
+            with pytest.raises(SourceProtocolError, match="different MST"):
+                await adapter.fetch_effective_law(
+                    mst="different-version", effective_date=date(2025, 1, 1)
+                )
+
+    asyncio.run(run())
+
+
+def test_body_rejects_missing_requested_law_id():
+    payload = deepcopy(BODY_PAYLOAD)
+    del payload["법령"]["기본정보"]["법령ID"]
+
+    async def run():
+        async with _mock_client(payload) as client:
+            adapter = LawGoKrAdapter(oc="secret-oc", client=client)
+            with pytest.raises(SourceProtocolError, match="missing requested ID"):
+                await adapter.fetch_law(law_id="001823")
 
     asyncio.run(run())
