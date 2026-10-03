@@ -60,3 +60,39 @@ def test_rule_engine_api_returns_422_for_invalid_rules():
     ok = {"rule": _rule({">=": [{"var": "stair.direct_count"}, 1]}), "facts": FACTS}
     res = client.post("/v1/evaluate", json=ok)
     assert res.status_code == 200 and res.json()["outcome"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {">=": [{"var": "stair.label"}, 2]},  # str vs int
+        {"<": [{"var": "stair.missing"}, 2]},  # missing fact (None) vs int
+        {"in": [1, {"var": "stair.direct_count"}]},  # membership in an int
+        {">": [1, 2, 3]},  # wrong arity
+    ],
+    ids=["str-vs-int", "missing-fact", "in-non-container", "arity"],
+)
+def test_type_mismatch_is_a_rule_error_not_a_crash(condition):
+    with pytest.raises(RuleEvaluationError, match="Operator"):
+        evaluate_rule(_rule(condition), {"stair": {"direct_count": 1, "label": "two"}})
+
+
+def test_rule_engine_api_returns_422_for_type_mismatch():
+    from apps.rule_engine import app
+
+    client = TestClient(app)
+    res = client.post(
+        "/v1/evaluate",
+        json={
+            "rule": _rule({">=": [{"var": "stair.label"}, 2]}),
+            "facts": {"stair": {"label": "two"}},
+        },
+    )
+    assert res.status_code == 422
+    assert "cannot compare str with int" in res.json()["detail"]
+
+
+def test_numeric_comparisons_still_mix_int_and_float():
+    rule = _rule({">=": [{"var": "stair.width"}, 1.2]})
+    assert evaluate_rule(rule, {"stair": {"width": 2}}).outcome is DecisionOutcome.PASS
+    assert evaluate_rule(_rule({"in": ["KR", ["KR", "JP"]]}), {}).outcome is DecisionOutcome.PASS
