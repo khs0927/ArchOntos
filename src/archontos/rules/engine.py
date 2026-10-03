@@ -40,10 +40,14 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
     if not isinstance(expr, dict):
         return _resolve(expr, facts)
     if len(expr) != 1:
-        return {key: evaluate_expr(value, facts) for key, value in expr.items()}
+        # A multi-key (or empty) object is not an operator expression. Evaluating it to a dict
+        # made any such condition truthy, so a malformed rule silently took its 'then' branch.
+        raise RuleEvaluationError(
+            "Expression must contain exactly one operator; wrap object values in {'literal': ...}"
+        )
 
     op, args = next(iter(expr.items()))
-    if op == "var":
+    if op in {"var", "literal"}:
         return _resolve(expr, facts)
 
     args_list = args if isinstance(args, list) else [args]
