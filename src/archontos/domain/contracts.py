@@ -38,6 +38,7 @@ class EvidenceSpanContract(BaseModel):
 class AecSubjectRef(BaseModel):
     """Stable reference from a legal assertion to an Ontology AEC subject."""
 
+    schema: Literal["archontos-aec-subject-ref/1"] = "archontos-aec-subject-ref/1"
     project_id: str = Field(min_length=1)
     object_id: str | None = Field(default=None, min_length=1)
     source_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
