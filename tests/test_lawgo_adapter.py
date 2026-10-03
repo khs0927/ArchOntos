@@ -9,7 +9,6 @@ from archontos.ingestion.adapters import (
     SourceAuthenticationError,
 )
 
-
 SEARCH_PAYLOAD = {
     "LawSearch": {
         "target": "law",
