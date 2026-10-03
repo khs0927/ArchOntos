@@ -57,7 +57,8 @@ class AecSubjectRef(BaseModel):
             value is not None for value in revision_fields
         ):
             raise ValueError(
-                "source_id, source_byte_revision_id and parser_revision_id must be supplied together"
+                "source_id, source_byte_revision_id and parser_revision_id "
+                "must be supplied together"
             )
         return self
 
