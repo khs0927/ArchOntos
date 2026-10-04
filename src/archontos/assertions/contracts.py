@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from archontos.domain.contracts import AecSubjectRef
 from archontos.domain.enums import ReviewStatus
 
 InterpreterMethod = Literal["structured-parser", "llm", "human"]
@@ -14,6 +15,7 @@ class AssertionCandidateCreate(BaseModel):
     evidence_span_id: UUID
     natural_language: str = Field(min_length=1)
     structured_payload: dict[str, Any] = Field(default_factory=dict)
+    applies_to: list[AecSubjectRef] = Field(default_factory=list, max_length=10_000)
     interpreter_method: InterpreterMethod
     interpretation_confidence: float | None = Field(default=None, ge=0, le=1)
 

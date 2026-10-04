@@ -38,6 +38,19 @@ Supported expression operators in the first implementation:
 
 Unknown operators fail closed with `RuleEvaluationError`; they are never silently interpreted.
 
+## Units
+
+Compiled unit-bearing requirements carry `fact_units`, a map from complete fact paths to explicit units.
+Facts use the same map, for example `{"stair": {"direct_count": 2},
+"fact_units": {"stair.direct_count": "count"}}`. A missing or different unit yields `REVIEW`; numerical
+values are never automatically converted. Finite numbers are required, booleans and numeric strings
+are rejected, and `count` requires a non-negative integral value.
+
+Compiler version `safe-requirement-v2-units` gives recompilation a new version identity. Existing v1
+rules with a unit in their branch's `required` metadata also receive the gate before scope conditions
+or rule operands run. Supported units are listed in `archontos.rules.units.UNITS`; an unrecognized
+requirement unit cannot compile. These checks verify consistency, not legal correctness of a threshold.
+
 ## Missing facts
 
 The project's governing rule is that an unevaluable rule yields `REVIEW`, never

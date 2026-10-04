@@ -195,6 +195,9 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             },
             interpreter_method="human",
             interpretation_confidence=1.0,
+            applies_to=[
+                {"project_id": "synthetic-project", "locator": {"document_id": "synthetic-doc"}}
+            ],
         )
 
         async with session_factory() as session:
@@ -227,6 +230,7 @@ async def test_postgres_mvp0_golden_path(tmp_path):
                     facts={
                         "context": {"jurisdiction": "KR"},
                         "stair": {"direct_count": 1},
+                        "fact_units": {"stair.direct_count": "count"},
                     },
                     evaluated_at=datetime(2026, 6, 1, tzinfo=UTC),
                 )
@@ -249,6 +253,8 @@ async def test_postgres_mvp0_golden_path(tmp_path):
             )
 
             assert evidence.evidence[0].assertion_review_status is ReviewStatus.APPROVED
+            assert evidence.evidence[0].applies_to[0].project_id == "synthetic-project"
+            assert evidence.evidence[0].applies_to[0].locator == {"document_id": "synthetic-doc"}
             assert authority.authority_class == "statutory"
             assert authority.document_type == "statute"
             assert applicability.entries[0].jurisdiction_code == "KR"

@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from archontos.rules.units import UNITS, valid_unit_value
+
 
 class RuleCompilationError(ValueError):
     pass
@@ -25,7 +27,7 @@ class RequirementSpec(BaseModel):
 class CompiledRule:
     title: str
     logic_expr: dict[str, Any]
-    compiler_version: str = "safe-requirement-v1"
+    compiler_version: str = "safe-requirement-v2-units"
 
 
 def authority_from_document_type(document_type: str) -> str:
@@ -55,6 +57,14 @@ def compile_requirement(
         spec = RequirementSpec.model_validate(structured_payload)
     except ValidationError as exc:
         raise RuleCompilationError(f"invalid executable requirement payload: {exc}") from exc
+    if spec.unit is not None:
+        if spec.unit not in UNITS:
+            raise RuleCompilationError(f"unsupported requirement unit: {spec.unit!r}")
+        if not valid_unit_value(spec.value, spec.unit):
+            raise RuleCompilationError(
+                "unit-bearing requirements need a finite numeric value; "
+                "counts need non-negative integers"
+            )
 
     applicability = dict(spec.applicability)
     if "jurisdiction" in applicability:
@@ -110,6 +120,8 @@ def compile_requirement(
             },
         },
     }
+    if spec.unit is not None:
+        logic_expr["fact_units"] = {spec.fact_path: spec.unit}
     return CompiledRule(
         title=spec.title or natural_language,
         logic_expr=logic_expr,

@@ -60,6 +60,7 @@ class CanonicalQueryRepository:
                     sv.effective_to AS source_effective_to,
                     a.id AS assertion_id,
                     a.review_status AS assertion_review_status,
+                    a.applies_to_json,
                     e.id AS evidence_id,
                     e.evidence_key,
                     e.locator_json,
@@ -97,6 +98,7 @@ class CanonicalQueryRepository:
                 text_snippet=row.text_snippet,
                 artifact_uri=row.artifact_uri,
                 artifact_hash=row.artifact_hash,
+                applies_to=list(row.applies_to_json or []),
             )
             for row in rows
         ]
