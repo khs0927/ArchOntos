@@ -31,6 +31,7 @@ def test_safe_requirement_compiles_and_evaluates():
             "context": {"jurisdiction": "KR"},
             "building": {"use_group": "공동주택"},
             "stair": {"direct_count": 2},
+            "fact_units": {"stair.direct_count": "count"},
         },
     )
     failed = evaluate_rule(
@@ -39,6 +40,7 @@ def test_safe_requirement_compiles_and_evaluates():
             "context": {"jurisdiction": "KR"},
             "building": {"use_group": "공동주택"},
             "stair": {"direct_count": 1},
+            "fact_units": {"stair.direct_count": "count"},
         },
     )
     assert passed.outcome.value == "PASS"

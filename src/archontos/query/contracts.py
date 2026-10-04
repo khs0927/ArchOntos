@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from archontos.domain.contracts import AecSubjectRef
 from archontos.domain.enums import QueryIntent, ReviewStatus
 
 
@@ -23,6 +24,7 @@ class EvidenceBasisView(BaseModel):
     text_snippet: str | None = None
     artifact_uri: str | None = None
     artifact_hash: str | None = None
+    applies_to: list[AecSubjectRef] = Field(default_factory=list)
 
 
 class SourceEvidenceView(BaseModel):

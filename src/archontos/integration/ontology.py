@@ -48,14 +48,43 @@ def load_facts_export(data: Any) -> dict[str, Any]:
         raise OntologyFactsError(f"expected schema {FACTS_SCHEMA}")
     if not isinstance(data.get("facts"), dict):
         raise OntologyFactsError("facts must be an object")
+    if not isinstance(data.get("project_key"), str) or not data["project_key"].strip():
+        raise OntologyFactsError("project_key is required")
+    provenance = data.get("provenance") or {}
+    if not isinstance(provenance, dict):
+        raise OntologyFactsError("provenance must be an object")
+    raw_subjects = data.get("subjects") or []
+    if not isinstance(raw_subjects, list) or len(raw_subjects) > 10_000:
+        raise OntologyFactsError("subjects must be a bounded list")
     subjects = []
-    for index, subject in enumerate(data.get("subjects") or []):
+    for index, subject in enumerate(raw_subjects):
+        if not isinstance(subject, dict):
+            raise OntologyFactsError(f"subjects[{index}] must be an object")
         try:
             ref = AecSubjectRef.model_validate((subject or {}).get("ref"))
         except ValidationError as exc:
             raise OntologyFactsError(f"subjects[{index}].ref: {exc.errors()[0]['msg']}") from exc
         subjects.append({**subject, "ref": ref.model_dump(mode="json")})
-    return {**data, "subjects": subjects, "provenance": data.get("provenance") or {}}
+    facts = deepcopy(data["facts"])
+    warnings = []
+    for path in ("building.floor_count", "building.basement_count"):
+        source = provenance.get(path) or {}
+        if isinstance(source, dict) and (
+            source.get("coverage") == "partial"
+            or source.get("authoritative_total") is False
+            or str(source.get("method", "")).startswith(("highest nF", "deepest Bn"))
+        ):
+            building = facts.get("building")
+            if isinstance(building, dict) and path.split(".")[1] in building:
+                building.pop(path.split(".")[1])
+                warnings.append(f"{path}: observed floor labels do not prove a building total")
+    return {
+        **data,
+        "facts": facts,
+        "subjects": subjects,
+        "provenance": provenance,
+        "fact_warnings": warnings,
+    }
 
 
 def _get(path: str, facts: dict[str, Any]) -> Any:
@@ -72,15 +101,34 @@ def _flatten(prefix: str, value: Any, out: dict[str, Any]) -> None:
         for key, item in value.items():
             _flatten(f"{prefix}.{key}" if prefix else str(key), item, out)
     else:
-        out[prefix] = value
+        if prefix:
+            if any(not part for part in prefix.split(".")):
+                raise OntologyFactsError("context fact paths must not contain empty components")
+            if prefix in out and out[prefix] != value:
+                raise OntologyFactsError(f"conflicting operator fact representations: {prefix}")
+            out[prefix] = value
 
 
 def merge_context(facts: dict[str, Any], context: dict[str, Any] | None) -> tuple[dict, list]:
     """Add operator facts; a key the drawings already provide is kept and reported as a conflict."""
+    if context is not None and not isinstance(context, dict):
+        raise OntologyFactsError("operator context must be an object")
     merged = deepcopy(facts)
     conflicts = []
     flat: dict[str, Any] = {}
-    _flatten("", context or {}, flat)
+    operator = dict(context or {})
+    unit_context = operator.pop("fact_units", _MISSING)
+    if unit_context is not _MISSING and not isinstance(unit_context, dict):
+        raise OntologyFactsError(
+            "operator fact_units must be an object keyed by complete fact paths"
+        )
+    _flatten("", operator, flat)
+    if any(path.startswith("fact_units.") for path in flat):
+        raise OntologyFactsError("use the fact_units object for unit declarations")
+    for path in flat:
+        parts = path.split(".")
+        if any(".".join(parts[:index]) in flat for index in range(1, len(parts))):
+            raise OntologyFactsError(f"conflicting operator fact prefixes: {path}")
     for path, value in flat.items():
         existing = _get(path, merged)
         if existing is not _MISSING:
@@ -89,12 +137,46 @@ def merge_context(facts: dict[str, Any], context: dict[str, Any] | None) -> tupl
             continue
         target = merged
         parts = path.split(".")
-        for part in parts[:-1]:
+        blocked = False
+        for index, part in enumerate(parts[:-1]):
             nxt = target.get(part)
-            if not isinstance(nxt, dict):
+            if part in target and not isinstance(nxt, dict):
+                # A nested operator path must not replace a scalar canonical ancestor.
+                conflicts.append(
+                    {
+                        "fact": path,
+                        "drawings": nxt,
+                        "operator": value,
+                        "blocked_by": ".".join(parts[: index + 1]),
+                    }
+                )
+                blocked = True
+                break
+            if part not in target:
                 nxt = target[part] = {}
             target = nxt
-        target[parts[-1]] = value
+        if not blocked:
+            target[parts[-1]] = value
+    if unit_context is not _MISSING:
+        existing_units = merged.setdefault("fact_units", {})
+        if not isinstance(existing_units, dict):
+            conflicts.append(
+                {"fact": "fact_units", "drawings": existing_units, "operator": unit_context}
+            )
+        else:
+            for path, unit in unit_context.items():
+                if not isinstance(path, str) or any(not p for p in path.split(".")):
+                    raise OntologyFactsError("unit declarations require non-empty fact paths")
+                if path in existing_units and existing_units[path] != unit:
+                    conflicts.append(
+                        {
+                            "fact": f"fact_units[{path}]",
+                            "drawings": existing_units[path],
+                            "operator": unit,
+                        }
+                    )
+                elif path not in existing_units:
+                    existing_units[path] = unit
     return merged, conflicts
 
 
@@ -125,9 +207,14 @@ def rule_vars(expr: Any) -> list[str]:
     return found
 
 
-def evaluate_against_ontology(rule_document: dict[str, Any], export: dict[str, Any], *,
-                              context: dict[str, Any] | None = None, rule_id: str | None = None,
-                              version_label: str | None = None) -> dict[str, Any]:
+def evaluate_against_ontology(
+    rule_document: dict[str, Any],
+    export: dict[str, Any],
+    *,
+    context: dict[str, Any] | None = None,
+    rule_id: str | None = None,
+    version_label: str | None = None,
+) -> dict[str, Any]:
     export = load_facts_export(export)
     facts, conflicts = merge_context(export["facts"], context)
     try:
@@ -141,10 +228,18 @@ def evaluate_against_ontology(rule_document: dict[str, Any], export: dict[str, A
     for path in used:
         if _get(path, export["facts"]) is not _MISSING:
             evidence[path] = {"source": "ontology", **(export["provenance"].get(path) or {})}
-        elif path in operator_paths:
+        elif path in operator_paths and _get(path, facts) is not _MISSING:
             evidence[path] = {"source": "operator"}
+        if (
+            path in evidence
+            and isinstance(facts.get("fact_units"), dict)
+            and path in facts["fact_units"]
+        ):
+            evidence[path]["unit"] = facts["fact_units"][path]
     return {
         "schema": EVALUATION_SCHEMA,
+        "evaluation_mode": "offline",
+        "binding": False,
         "rule_id": rule_id,
         "version_label": version_label,
         "project_key": export.get("project_key"),
@@ -154,20 +249,35 @@ def evaluate_against_ontology(rule_document: dict[str, Any], export: dict[str, A
         "details": result.details,
         "applies_to": [s["ref"] for s in export["subjects"] if s.get("type") == "Project"],
         "facts_read": used,
-        "missing_facts": [p for p in used if _get(p, facts) is _MISSING],
+        "missing_facts": [p for p in used if _get(p, facts) is _MISSING or _get(p, facts) is None],
         "fact_evidence": evidence,
         "context_conflicts": conflicts,
+        "fact_warnings": export["fact_warnings"],
     }
 
 
-def rule_export_entry(evaluation: dict[str, Any], *, title: str | None = None,
-                      text: str | None = None, source: Any = None) -> dict[str, Any]:
+def rule_export_entry(
+    evaluation: dict[str, Any],
+    *,
+    title: str | None = None,
+    text: str | None = None,
+    source: Any = None,
+) -> dict[str, Any]:
     """One ``archontos-rule-export/1`` rule linking the evaluated rule to the project subjects."""
     if not evaluation.get("rule_id"):
         raise OntologyFactsError("rule_id is required to export a link")
-    return {"rule_id": evaluation["rule_id"], "version_label": evaluation.get("version_label"),
-            "title": title or evaluation["rule_id"], "text": text, "source": source,
-            "outcome": evaluation.get("outcome"), "applies_to": evaluation["applies_to"]}
+    return {
+        "rule_id": evaluation["rule_id"],
+        "version_label": evaluation.get("version_label"),
+        "title": title or evaluation["rule_id"],
+        "text": text,
+        "source": source,
+        "outcome": evaluation.get("outcome"),
+        "applies_to": evaluation["applies_to"],
+        "evaluation_mode": "offline",
+        "binding": False,
+        "canonical_context": None,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -190,16 +300,22 @@ def main(argv: list[str] | None = None) -> int:
         raw = args.context
         context = read(raw[1:]) if raw.startswith("@") else json.loads(raw)
     try:
-        evaluation = evaluate_against_ontology(read(args.rule), read(args.facts), context=context,
-                                               rule_id=args.rule_id,
-                                               version_label=args.version_label)
+        evaluation = evaluate_against_ontology(
+            read(args.rule),
+            read(args.facts),
+            context=context,
+            rule_id=args.rule_id,
+            version_label=args.version_label,
+        )
     except OntologyFactsError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
     sys.stdout.write(json.dumps(evaluation, ensure_ascii=False, indent=2) + "\n")
     if args.export_links:
-        export = {"schema": RULE_EXPORT_SCHEMA,
-                  "rules": [rule_export_entry(evaluation, title=args.title)]}
+        export = {
+            "schema": RULE_EXPORT_SCHEMA,
+            "rules": [rule_export_entry(evaluation, title=args.title)],
+        }
         with open(args.export_links, "w", encoding="utf-8") as fh:
             json.dump(export, fh, ensure_ascii=False, indent=2)
     return 0

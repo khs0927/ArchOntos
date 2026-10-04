@@ -74,18 +74,20 @@ class CanonicalAssertionRepository:
             evidence_span_id=payload.evidence_span_id,
             natural_language=payload.natural_language,
             structured_payload=payload.structured_payload,
+            applies_to=[ref.model_dump(mode="json") for ref in payload.applies_to],
         )
         inserted = await self.session.execute(
             text(
                 """
                 INSERT INTO assertion(
                     source_version_id, evidence_span_id, assertion_key,
-                    natural_language, structured_payload_json,
+                    natural_language, structured_payload_json, applies_to_json,
                     interpreter_method, interpretation_confidence, review_status
                 )
                 VALUES (
                     :source_version_id, :evidence_span_id, :assertion_key,
                     :natural_language, CAST(:structured_payload_json AS jsonb),
+                    CAST(:applies_to_json AS jsonb),
                     :interpreter_method, :interpretation_confidence, 'unreviewed'
                 )
                 ON CONFLICT (evidence_span_id, assertion_key)
@@ -101,6 +103,11 @@ class CanonicalAssertionRepository:
                 "natural_language": payload.natural_language,
                 "structured_payload_json": json.dumps(
                     payload.structured_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "applies_to_json": json.dumps(
+                    [ref.model_dump(mode="json") for ref in payload.applies_to],
                     ensure_ascii=False,
                     sort_keys=True,
                 ),

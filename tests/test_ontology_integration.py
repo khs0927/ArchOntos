@@ -33,17 +33,39 @@ def export():
             "space": {"uses": ["계단실", "화장실"]},
         },
         "provenance": {
-            "building.floor_count": {"method": "highest nF", "kg_nodes": ["kg:st:x:5F"]},
+            "building.floor_count": {
+                "method": "synthetic total fixture",
+                "coverage": "complete",
+                "authoritative_total": True,
+                "kg_nodes": ["kg:st:x:5F"],
+            },
         },
         "subjects": [
-            {"kg_node": "kg:p:x", "type": "Project", "name": "주례동 315-4",
-             "ref": {"schema": "archontos-aec-subject-ref/1", "project_id": "P-1",
-                     "object_id": None, "locator": {"kg_node": "kg:p:x"}}},
-            {"kg_node": "kg:d:doc1", "type": "Drawing", "name": "A-101.dwg",
-             "ref": {"schema": "archontos-aec-subject-ref/1", "project_id": "P-1",
-                     "object_id": None, "source_id": H, "source_byte_revision_id": H,
-                     "parser_revision_id": parser_revision("doc1", 0, H),
-                     "locator": {"kg_node": "kg:d:doc1", "document_id": "doc1"}}},
+            {
+                "kg_node": "kg:p:x",
+                "type": "Project",
+                "name": "주례동 315-4",
+                "ref": {
+                    "schema": "archontos-aec-subject-ref/1",
+                    "project_id": "P-1",
+                    "object_id": None,
+                    "locator": {"kg_node": "kg:p:x"},
+                },
+            },
+            {
+                "kg_node": "kg:d:doc1",
+                "type": "Drawing",
+                "name": "A-101.dwg",
+                "ref": {
+                    "schema": "archontos-aec-subject-ref/1",
+                    "project_id": "P-1",
+                    "object_id": None,
+                    "source_id": H,
+                    "source_byte_revision_id": H,
+                    "parser_revision_id": parser_revision("doc1", 0, H),
+                    "locator": {"kg_node": "kg:d:doc1", "document_id": "doc1"},
+                },
+            },
         ],
     }
 
@@ -89,6 +111,19 @@ def test_drawing_fact_decides_and_exports_link():
     entry = rule_export_entry(result, title="층수")
     assert entry["applies_to"][0]["schema"] == "archontos-aec-subject-ref/1"
     assert entry["outcome"] == "PASS" and entry["version_label"] == "v1"
+    assert entry["binding"] is False and entry["canonical_context"] is None
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [{"method": "highest nF"}, {"coverage": "partial"}, {"authoritative_total": False}],
+)
+def test_partial_floor_labels_cannot_certify_building_totals(provenance):
+    partial = export()
+    partial["provenance"]["building.floor_count"] = provenance
+    result = evaluate_against_ontology(floors_rule(), partial)
+    assert result["outcome"] == "REVIEW" and result["missing_facts"] == ["building.floor_count"]
+    assert result["fact_warnings"]
 
 
 def test_out_of_scope_jurisdiction_is_not_applicable():
@@ -121,7 +156,9 @@ def test_invalid_export_and_subject_refs_are_rejected():
 
 def test_rule_vars_include_scope_facts():
     assert rule_vars(stair_rule()) == [
-        "building.floor_count", "stair.direct_count", "context.jurisdiction"
+        "building.floor_count",
+        "stair.direct_count",
+        "context.jurisdiction",
     ]
 
 
@@ -129,8 +166,20 @@ def test_cli_round_trip(tmp_path, capsys):
     (tmp_path / "rule.json").write_text(json.dumps(floors_rule()), encoding="utf-8")
     (tmp_path / "facts.json").write_text(json.dumps(export(), ensure_ascii=False), encoding="utf-8")
     links = tmp_path / "links.json"
-    code = main(["--rule", str(tmp_path / "rule.json"), "--facts", str(tmp_path / "facts.json"),
-                 "--rule-id", "R-2", "--title", "층수", "--export-links", str(links)])
+    code = main(
+        [
+            "--rule",
+            str(tmp_path / "rule.json"),
+            "--facts",
+            str(tmp_path / "facts.json"),
+            "--rule-id",
+            "R-2",
+            "--title",
+            "층수",
+            "--export-links",
+            str(links),
+        ]
+    )
     assert code == 0
     assert json.loads(capsys.readouterr().out)["outcome"] == "PASS"
     exported = json.loads(links.read_text(encoding="utf-8"))

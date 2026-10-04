@@ -5,6 +5,7 @@ from typing import Any
 
 from archontos.domain.contracts import RuleEvaluationResult
 from archontos.domain.enums import DecisionOutcome
+from archontos.rules.units import UNITS, valid_unit_value
 
 
 class RuleEvaluationError(ValueError):
@@ -178,8 +179,59 @@ def _matches_scope(applicability: dict[str, Any], facts: dict[str, Any]) -> bool
     return all(bool(value) for value in condition_values)
 
 
+def _unit_problems(expected: Any, facts: dict[str, Any]) -> list[str]:
+    if not isinstance(expected, dict):
+        raise RuleEvaluationError("rule fact_units must be an object")
+    actual_units = facts.get("fact_units") or {}
+    problems = []
+    for path, unit in expected.items():
+        if not isinstance(path, str) or not isinstance(unit, str) or unit not in UNITS:
+            raise RuleEvaluationError("invalid expected fact unit")
+        actual = actual_units.get(path) if isinstance(actual_units, dict) else None
+        if actual != unit:
+            problems.append(f"{path}: expected unit {unit}, received {actual!r}")
+        if not valid_unit_value(_get_var(path, facts), unit):
+            problems.append(f"{path}: numeric fact is absent, non-finite or invalid for {unit}")
+    return problems
+
+
+def _expected_units(doc: dict[str, Any], body: dict[str, Any]) -> dict[str, str]:
+    expected = doc.get("fact_units", {})
+    if not isinstance(expected, dict):
+        raise RuleEvaluationError("rule fact_units must be an object")
+    expected = dict(expected)
+    # Compiler v1 stored units only in the rendered branch metadata. Existing canonical versions
+    # still need this gate before operators compare their numeric facts.
+    for branch in (body.get("then"), body.get("else")):
+        for payload in (branch or {}).values() if isinstance(branch, dict) else []:
+            if not isinstance(payload, dict) or not isinstance(payload.get("required"), dict):
+                continue
+            unit = payload["required"].get("unit")
+            if unit is None:
+                continue
+            actual = payload.get("actual")
+            path = (
+                actual.get("var") if isinstance(actual, dict) and set(actual) == {"var"} else None
+            )
+            if not isinstance(path, str):
+                raise RuleEvaluationError("unit-bearing branch must identify its actual fact path")
+            if path in expected and expected[path] != unit:
+                raise RuleEvaluationError("conflicting expected fact units")
+            expected[path] = unit
+    return expected
+
+
 def evaluate_rule(rule_document: dict[str, Any], facts: dict[str, Any]) -> RuleEvaluationResult:
     doc = deepcopy(rule_document)
+    body = doc.get("rule", doc)
+    unit_problems = _unit_problems(_expected_units(doc, body), facts)
+    if unit_problems:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Fact units or numeric values need verification",
+            details={"unit_problems": unit_problems},
+        )
     applicability = doc.get("applicability", {})
     try:
         if applicability and not _matches_scope(applicability, facts):
@@ -218,6 +270,14 @@ def evaluate_rule(rule_document: dict[str, Any], facts: dict[str, Any]) -> RuleE
         )
 
     body = doc.get("rule", doc)
+    unit_problems = _unit_problems(_expected_units(doc, body), working_facts)
+    if unit_problems:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Fact units or numeric values need verification",
+            details={"unit_problems": unit_problems},
+        )
     condition = body.get("if")
     if condition is None:
         raise RuleEvaluationError("Rule must contain an 'if' expression")
