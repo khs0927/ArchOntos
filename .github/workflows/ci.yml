@@ -12,6 +12,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: pgvector/pgvector:0.8.6-pg18
@@ -41,3 +42,11 @@ jobs:
         run: pytest
       - name: Compile
         run: python -m compileall -q src apps tests
+      - name: Build image (non-root) and run the migration runner from it
+        run: |
+          docker build -t archontos:ci .
+          test "$(docker run --rm archontos:ci id -u)" = "10001"
+          dsn=postgresql://archontos:archontos@localhost:5432/archontos
+          docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn"
+          docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn" | grep "applied 0"
+          docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn" --status

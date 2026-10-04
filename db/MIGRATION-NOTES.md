@@ -40,17 +40,39 @@
 - `action` / `action_run` 영속화. 스키마는 있으나 이를 쓰는 Python이 없다
 - projection_checkpoint 갱신 경로. 스키마는 있으나 드레인하는 워커가 없다
 
-## 이 저장소에 alembic이 없는 이유
+## 마이그레이션 실행기 (`archontos.db.migrate`)
 
-`alembic`은 `pyproject.toml`에 선언되어 있으나 `alembic.ini`, `env.py`,
-`script.py.mako`가 하나도 없다. 실제로 쓰이지 않는 유령 의존성이며
-`alembic revision`은 첫 호출에 "no config file"로 실패한다.
+운영·CI·테스트가 모두 같은 경로를 쓴다: `python -m archontos.db.migrate`.
 
-운영 마이그레이션 경로는 `docker-compose.yml`이 `./db/migrations`를
-`docker-entrypoint-initdb.d`에 마운트하는 방식이고, 테스트 경로는
-`tests/integration/conftest.py`가 `*.sql`을 정렬해 적용하는 방식이다. 두 곳 모두
-**빈 볼륨에서만** 실행된다. 이미 데이터가 있는 볼륨에 배포하면 새 migration이
-적용되지 않는다. 업그레이드 경로는 아직 없다.
+- `db/migrations/NNN_name.sql`을 이름 순서로 한 번씩 적용하고 `schema_migrations`
+  (version, sha256 checksum, applied_at)에 기록한다. Postgres advisory lock으로 여러
+  서비스가 동시에 시작해도 한 번만 실행된다.
+- `docker compose up`은 일회성 `migrate` 서비스를 먼저 실행하고, 앱 서비스는 그것이
+  0으로 끝난 뒤에 시작한다. 예전의 `docker-entrypoint-initdb.d` 마운트(빈 볼륨에서만
+  실행)는 제거했다.
+- `tests/integration/conftest.py`도 같은 실행기를 쓴다. `tests/integration/test_migrations.py`는
+  "이전 일부 migration만 적용된 DB를 업그레이드한 결과 = 새 DB" (컬럼·인덱스·제약 비교)를 검사한다.
+- 이미 적용된 migration 파일을 고치면 checksum 불일치로 실패한다. 변경은 새 번호 파일로 한다.
+  (CRLF/LF 차이는 무시한다.)
+- 같은 번호 접두(`004_a`, `004_b`)는 거부한다.
+- `alembic`은 설정 파일이 하나도 없는 유령 의존성이었으므로 `pyproject.toml`에서 제거했다.
+
+### 예전 initdb 마운트로 만든 볼륨
+
+`schema_migrations`가 없는데 테이블이 있으면 실행기는 멈추고 안내한다. 그 볼륨이 어떤
+migration까지 갖고 있는지 확인한 뒤 한 번만:
+
+```bash
+docker compose run --rm migrate python -m archontos.db.migrate --status
+docker compose run --rm migrate python -m archontos.db.migrate --baseline 007
+```
+
+### 2026-10 수정: 005의 제약 존재 검사
+
+`005_assertion_review_workflow.sql`은 `pg_constraint`를 이름만으로 검사해서, 같은 DB의
+다른 스키마(예: 테스트 스키마)에 같은 이름의 제약이 있으면 `uq_evidence_span_id_source_version`과
+`assertion_evidence_source_fk`를 만들지 않고 건너뛰었다. `conrelid = '<table>'::regclass`로
+범위를 한정했다. 실행기 도입 전이라 기록된 checksum이 없으므로 파일을 직접 고쳤다.
 
 ## 안전 규칙
 

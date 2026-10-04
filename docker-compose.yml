@@ -10,8 +10,6 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - archontos-postgres:/var/lib/postgresql/data
-      # Plain SQL, applied in order on an EMPTY volume only (see db/MIGRATION-NOTES.md).
-      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U archontos -d archontos"]
       interval: 5s
@@ -36,6 +34,19 @@ services:
     volumes:
       - archontos-minio:/data
 
+  # One-shot, idempotent migration runner (schema_migrations + advisory lock). Replaces the old
+  # docker-entrypoint-initdb.d mount, which only ever ran on an EMPTY volume. The app services
+  # start after it exits 0. Volumes created by the old mount: see db/MIGRATION-NOTES.md (--baseline).
+  migrate:
+    build: .
+    command: ["python", "-m", "archontos.db.migrate"]
+    environment:
+      ARCHONTOS_DATABASE_URL: postgresql+asyncpg://archontos:archontos@postgres:5432/archontos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   ingestion:
     build: .
     command: ["uvicorn", "apps.ingestion:app", "--host", "0.0.0.0", "--port", "8001"]
@@ -58,6 +69,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       minio:
         condition: service_started
         required: false
@@ -73,6 +86,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       minio:
         condition: service_started
         required: false
@@ -86,6 +101,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   projection:
     build: .
@@ -96,6 +113,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   action:
     build: .
@@ -106,6 +125,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   archontos-postgres:
