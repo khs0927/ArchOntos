@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -56,6 +57,36 @@ def law_version_label(item: LawSearchItem) -> str:
     raise CanonicalizationError("law.go.kr item has neither MST nor enforcement date")
 
 
+def assert_body_matches_request(item: LawSearchItem, body: LawBody) -> None:
+    """Refuse a fetched body that cannot be verified against the law it is filed under.
+
+    ``body.law_id`` and ``body.mst`` fall back to the request parameters, so
+    comparing those would be true by construction for any body the provider
+    returns, including a wrong one. The declared fields carry only what the
+    response stated; a provider that declares nothing is unverifiable rather
+    than matching.
+
+    Called by ``persist_law_version`` before any write, and separately by the
+    ingestion service before the body artifact is stored, so a refused body is
+    not durably written to artifact storage on its way to being rejected.
+    """
+    if body.declared_law_id is not None and body.declared_law_id != item.law_id:
+        raise CanonicalizationError(
+            "fetched body declares a different law_id than the law it was requested for"
+        )
+    if body.declared_mst is not None and body.declared_mst != item.mst:
+        raise CanonicalizationError(
+            "fetched body declares a different 연혁 revision than the one requested"
+        )
+    if body.declared_mst is None and item.mst:
+        # The requested mst was known at call time. Without a declared revision
+        # there is no version identity beyond a date, and storing it would file
+        # an unknown 연혁 under a known label.
+        raise CanonicalizationError(
+            "fetched body does not declare its 연혁 revision, so it cannot be verified"
+        )
+
+
 class CanonicalLawRepository:
     """PostgreSQL writes for an immutable official-law source version."""
 
@@ -94,6 +125,10 @@ class CanonicalLawRepository:
         effective_from = item.enforcement_date or body.enforcement_date
         if effective_from is None:
             raise CanonicalizationError("official law version is missing an enforcement date")
+
+        # Cross-check the fetched body against the law it is filed under, before
+        # any write.
+        assert_body_matches_request(item, body)
 
         source_key = law_source_key(item)
         version_label = law_version_label(item)
@@ -218,6 +253,159 @@ class CanonicalLawRepository:
             )
 
         source_version_id: UUID = row[0]
+
+        same_date_result = await self.session.execute(
+            text(
+                """
+                SELECT id, version_label
+                FROM source_version
+                WHERE source_id = :source_id
+                  AND id <> :source_version_id
+                  AND effective_from = :effective_from
+                FOR UPDATE
+                """
+            ),
+            {
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+                "effective_from": effective_from,
+            },
+        )
+        same_date_rows = same_date_result.all()
+        if same_date_rows:
+            conflicting_labels = ", ".join(
+                sorted(str(existing.version_label) for existing in same_date_rows)
+            )
+            await self.session.execute(
+                text(
+                    """
+                    INSERT INTO quality_flag(
+                        target_table, target_id, flag_type, severity, message
+                    )
+                    VALUES (
+                        'source_version', :target_id, 'ambiguity', 'high', :message
+                    )
+                    """
+                ),
+                {
+                    "target_id": source_version_id,
+                    "message": (
+                        "Multiple published source versions share effective_from "
+                        f"{effective_from.isoformat()}; existing versions: {conflicting_labels}"
+                    ),
+                },
+            )
+
+        previous_result = await self.session.execute(
+            text(
+                """
+                SELECT id, effective_from
+                FROM source_version
+                WHERE source_id = :source_id
+                  AND id <> :source_version_id
+                  AND effective_from < :effective_from
+                ORDER BY effective_from DESC
+                LIMIT 1
+                FOR UPDATE
+                """
+            ),
+            {
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+                "effective_from": effective_from,
+            },
+        )
+        previous_row = previous_result.first()
+
+        next_result = await self.session.execute(
+            text(
+                """
+                SELECT id, effective_from
+                FROM source_version
+                WHERE source_id = :source_id
+                  AND id <> :source_version_id
+                  AND effective_from > :effective_from
+                ORDER BY effective_from ASC
+                LIMIT 1
+                FOR UPDATE
+                """
+            ),
+            {
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+                "effective_from": effective_from,
+            },
+        )
+        next_row = next_result.first()
+
+        if previous_row is not None:
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE source_version
+                    SET effective_to = :effective_to,
+                        superseded_by = :superseded_by
+                    WHERE id = :previous_id
+                    """
+                ),
+                {
+                    "previous_id": previous_row.id,
+                    "effective_to": effective_from - timedelta(days=1),
+                    "superseded_by": source_version_id,
+                },
+            )
+
+        if previous_row is not None:
+            previous_effective_to = effective_from - timedelta(days=1)
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE rule_version rv
+                    SET valid_to = :valid_to
+                    FROM rule r
+                    WHERE r.id = rv.rule_id
+                      AND r.source_version_id = :source_version_id
+                    """
+                ),
+                {
+                    "source_version_id": previous_row.id,
+                    "valid_to": previous_effective_to,
+                },
+            )
+
+        if next_row is not None:
+            current_effective_to = next_row.effective_from - timedelta(days=1)
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE source_version
+                    SET effective_to = :effective_to,
+                        superseded_by = :superseded_by
+                    WHERE id = :source_version_id
+                    """
+                ),
+                {
+                    "source_version_id": source_version_id,
+                    "effective_to": current_effective_to,
+                    "superseded_by": next_row.id,
+                },
+            )
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE rule_version rv
+                    SET valid_to = :valid_to
+                    FROM rule r
+                    WHERE r.id = rv.rule_id
+                      AND r.source_version_id = :source_version_id
+                    """
+                ),
+                {
+                    "source_version_id": source_version_id,
+                    "valid_to": current_effective_to,
+                },
+            )
+
         event_payload = {
             "source_id": str(source_id),
             "source_version_id": str(source_version_id),

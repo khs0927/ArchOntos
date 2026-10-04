@@ -94,6 +94,13 @@ class LawBody:
     law_name: str
     law_id: str
     mst: str | None
+    # Identity as declared by the response payload only, with no fallback to
+    # the request parameters. `law_id` and `mst` above fall back to the request
+    # echo, so comparing them against the request proves nothing. These two are
+    # what a cross-check must use, and None means the provider did not declare
+    # the value, which is unverifiable rather than matching.
+    declared_law_id: str | None
+    declared_mst: str | None
     law_type: str
     ministry: str
     promulgation_date: date | None
@@ -225,10 +232,14 @@ class LawGoKrAdapter:
                 raise SourceProtocolError(
                     f"law.go.kr returned a different {selector} than requested"
                 )
+        declared_law_id = law_id
+        declared_mst = mst
         return LawBody(
             law_name=str(info.get("법령명_한글") or info.get("법령명한글") or ""),
             law_id=str(law_id or ""),
             mst=str(mst) if mst not in (None, "") else None,
+            declared_law_id=str(declared_law_id) if declared_law_id not in (None, "") else None,
+            declared_mst=str(declared_mst) if declared_mst not in (None, "") else None,
             law_type=str(_content(info.get("법종구분")) or info.get("법령구분명") or ""),
             ministry=str(_content(info.get("소관부처")) or info.get("소관부처명") or ""),
             promulgation_date=_yyyymmdd(info.get("공포일자")),

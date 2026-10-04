@@ -3,8 +3,8 @@
 --   SET LOCAL app.allowed_jurisdictions = 'KR,KR-11';
 --   SET LOCAL app.role = 'engineer';
 --
--- This migration is intentionally NOT auto-mounted in docker-compose until identity propagation
--- is implemented. Enabling a policy before the gateway sets claims would lock out legitimate users.
+-- Kept OUT of db/migrations on purpose: docker-compose mounts that whole folder into initdb, and
+-- enabling a policy before identity propagation exists would lock out legitimate users.
 
 BEGIN;
 

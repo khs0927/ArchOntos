@@ -1,8 +1,10 @@
 import asyncio
 from datetime import UTC, datetime
 
+import pytest
+
 from archontos.ingestion.adapters import RawSourceEnvelope
-from archontos.storage.artifacts import LocalArtifactStore
+from archontos.storage.artifacts import ArtifactReadError, LocalArtifactStore
 
 
 def test_local_artifact_store_is_content_addressed_and_idempotent(tmp_path):
@@ -21,3 +23,10 @@ def test_local_artifact_store_is_content_addressed_and_idempotent(tmp_path):
     assert len(first.content_hash) == 64
     stored = next(tmp_path.rglob("*.json"))
     assert stored.read_bytes() == envelope.canonical_bytes
+    assert asyncio.run(store.get_json(first.storage_uri)) == envelope.payload
+
+
+def test_local_artifact_store_rejects_path_escape(tmp_path):
+    store = LocalArtifactStore(tmp_path)
+    with pytest.raises(ArtifactReadError):
+        asyncio.run(store.get_json("local://../outside.json"))

@@ -11,6 +11,10 @@ class RuleEvaluationError(ValueError):
     pass
 
 
+class MissingRuleFactError(RuleEvaluationError):
+    pass
+
+
 def _get_var(path: str, facts: dict[str, Any], default: Any = None) -> Any:
     current: Any = facts
     for part in path.split("."):
@@ -53,20 +57,39 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
     args_list = args if isinstance(args, list) else [args]
 
     if op in {"and", "all"}:
-        return all(bool(evaluate_expr(item, facts)) for item in args_list)
+        values = [
+            _reject_absent(evaluate_expr(item, facts), f"{op}[{index}]")
+            for index, item in enumerate(args_list)
+        ]
+        return all(bool(value) for value in values)
     if op in {"or", "any"}:
-        return any(bool(evaluate_expr(item, facts)) for item in args_list)
+        values = [
+            _reject_absent(evaluate_expr(item, facts), f"{op}[{index}]")
+            for index, item in enumerate(args_list)
+        ]
+        return any(bool(value) for value in values)
     if op == "not":
-        return not bool(evaluate_expr(args_list[0], facts))
+        if len(args_list) != 1:
+            raise RuleEvaluationError(
+                f"Operator 'not' needs exactly one operand, got {len(args_list)}"
+            )
+        return not bool(_reject_absent(evaluate_expr(args_list[0], facts), "not"))
 
     resolved = [
-        evaluate_expr(item, facts) if isinstance(item, dict) else _resolve(item, facts)
-        for item in args_list
+        _reject_absent(
+            evaluate_expr(item, facts) if isinstance(item, dict) else _resolve(item, facts),
+            f"{op}[{index}]",
+        )
+        for index, item in enumerate(args_list)
     ]
-    if op == "==":
-        return resolved[0] == resolved[1]
-    if op == "!=":
-        return resolved[0] != resolved[1]
+
+    if op in {"==", "!="}:
+        # ``{"==": [x]}`` raised IndexError (500) and ``{"==": [a, b, c]}`` silently ignored ``c``.
+        if len(resolved) != 2:
+            raise RuleEvaluationError(
+                f"Operator '{op}' needs exactly two operands, got {len(resolved)}"
+            )
+        return (resolved[0] == resolved[1]) if op == "==" else (resolved[0] != resolved[1])
     if op in _ORDERED_OPS:
         return _ordered(op, resolved)
 
@@ -111,46 +134,105 @@ def _render(value: Any, facts: dict[str, Any]) -> Any:
     return value
 
 
+def _reject_absent(value: Any, where: str) -> Any:
+    """Fail closed when a resolved expression still holds an absent fact.
+
+    ``_get_var`` returns ``None`` for a fact that is not present, and a list or
+    dict literal keeps that ``None`` inside the structure. Handing either to
+    ``bool()`` turns a missing fact into a definitive verdict, so every
+    resolved expression is walked before it is allowed to decide anything.
+    """
+    if value is None:
+        raise MissingRuleFactError(f"missing fact at {where}")
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _reject_absent(item, f"{where}[{index}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _reject_absent(item, f"{where}.{key}")
+    return value
+
+
 def _matches_scope(applicability: dict[str, Any], facts: dict[str, Any]) -> bool:
     jurisdictions = applicability.get("jurisdiction") or []
     if jurisdictions:
         current = _get_var("context.jurisdiction", facts)
+        if current is None:
+            raise MissingRuleFactError("missing context.jurisdiction")
         if current not in jurisdictions:
             return False
 
     use_groups = applicability.get("building_use_groups") or []
     if use_groups:
         current_use = _get_var("building.use_group", facts)
+        if current_use is None:
+            raise MissingRuleFactError("missing building.use_group")
         if current_use not in use_groups:
             return False
 
     conditions = applicability.get("conditions") or []
-    return all(bool(evaluate_expr(condition, facts)) for condition in conditions)
+    condition_values = [
+        _reject_absent(evaluate_expr(condition, facts), f"applicability.conditions[{index}]")
+        for index, condition in enumerate(conditions)
+    ]
+    return all(bool(value) for value in condition_values)
 
 
 def evaluate_rule(rule_document: dict[str, Any], facts: dict[str, Any]) -> RuleEvaluationResult:
     doc = deepcopy(rule_document)
     applicability = doc.get("applicability", {})
-    if applicability and not _matches_scope(applicability, facts):
-        return RuleEvaluationResult(applicable=False, outcome=None, reason="Rule not applicable")
+    try:
+        if applicability and not _matches_scope(applicability, facts):
+            return RuleEvaluationResult(
+                applicable=False,
+                outcome=None,
+                reason="Rule not applicable",
+            )
+    except MissingRuleFactError as exc:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Insufficient facts to determine rule applicability",
+            details={"error": str(exc)},
+        )
 
     working_facts = deepcopy(facts)
-    for exception in doc.get("exceptions", []):
-        condition = exception.get("condition")
-        if condition and evaluate_expr(condition, working_facts):
-            for dotted_key, value in (exception.get("override") or {}).items():
-                target = working_facts
-                parts = dotted_key.split(".")
-                for part in parts[:-1]:
-                    target = target.setdefault(part, {})
-                target[parts[-1]] = value
+    try:
+        for exception in doc.get("exceptions", []):
+            condition = exception.get("condition")
+            if condition and _reject_absent(
+                evaluate_expr(condition, working_facts), "exceptions.condition"
+            ):
+                for dotted_key, value in (exception.get("override") or {}).items():
+                    target = working_facts
+                    parts = dotted_key.split(".")
+                    for part in parts[:-1]:
+                        target = target.setdefault(part, {})
+                    target[parts[-1]] = value
+    except MissingRuleFactError as exc:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Insufficient facts to evaluate rule exceptions",
+            details={"error": str(exc)},
+        )
 
     body = doc.get("rule", doc)
     condition = body.get("if")
     if condition is None:
         raise RuleEvaluationError("Rule must contain an 'if' expression")
 
-    branch = body.get("then") if evaluate_expr(condition, working_facts) else body.get("else")
+    try:
+        condition_matches = bool(_reject_absent(evaluate_expr(condition, working_facts), "rule.if"))
+    except MissingRuleFactError as exc:
+        return RuleEvaluationResult(
+            applicable=True,
+            outcome=DecisionOutcome.REVIEW,
+            reason="Insufficient facts to evaluate rule",
+            details={"error": str(exc)},
+        )
+
+    branch = body.get("then") if condition_matches else body.get("else")
     if not isinstance(branch, dict):
         raise RuleEvaluationError("Rule branch must be an object")
 

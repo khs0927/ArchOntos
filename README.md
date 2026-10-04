@@ -12,18 +12,53 @@ This repository starts with **MVP-0: Korean Architecture Regulation Fabric** and
 
 Implemented foundation:
 
+The markers below are load-bearing. `(schema only)` means the tables exist in
+`db/migrations` with no Python behind them yet, and `(shell)` means an endpoint
+exists but does not do the work its name implies. Nothing listed here is
+claimed to be more complete than it is.
+
+Complete and exercised against a real PostgreSQL instance:
+
 - canonical PostgreSQL schema with provenance, versions, evidence, assertions and rules
-- role-based hyperedges and immutable domain events
-- transactional outbox for projection/event delivery
-- JSON rule DSL evaluator with PASS / FAIL / REVIEW outcomes
-- five-query MVP-0 intent router
-- service boundaries for ingestion, normalization, rule engine, projection and action
-- FastAPI health and contract endpoints
-- PostgreSQL 18 + pgvector development stack
-- Prometheus-ready metrics endpoint
-- Helm/GitOps deployment skeleton
-- unit tests for rule evaluation, data contracts and query routing
+- immutable domain events
+- transactional outbox: producers in the ingestion, assertion, rule-compilation
+  and evaluation paths, with the normalization worker as the only consumer
+  (`projection` draining is not built yet, see below)
+- JSON rule DSL evaluator with PASS / FAIL / REVIEW outcomes, fail-closed on a
+  missing fact or an unknown operator
+- deterministic law.go.kr article/addendum/attachment evidence normalizer
+- idempotent evidence identity and canonical evidence persistence
+- assertion candidate + human review state machine
+- approved-assertion-only safe rule compiler
+- rule active/suspended lifecycle tied to assertion review state
+- five-query MVP-0 intent router and canonical query executors
+- evaluation and decision persistence bound to an explicit `rule_version`
+- immutable artifact/source-version ingestion with effective interval maintenance
 - official law.go.kr DRF client for current/effective versions, articles and attachments
+- canonical source-evidence, authority, applicability, temporal and jurisdiction query APIs
+- unit and integration tests, including a real-PostgreSQL golden path
+
+Present but not yet doing the work the name implies:
+
+- role-based hyperedges (`schema only`; no Python references any hyperedge table)
+- service boundaries for ingestion, normalization, rule engine, projection and
+  action (`shell`: `apps/projection.py` returns a hardcoded status literal and
+  `apps/action.py` returns a hardcoded proposal)
+- Prometheus-ready metrics endpoint (`partial`: `/metrics` is served, but
+  `REQUEST_COUNT` is declared and never incremented)
+- PostgreSQL 18 + pgvector development stack
+- Helm/GitOps deployment skeleton (`skeleton`: no ServiceAccount, NetworkPolicy
+  or HPA; no GitOps reconciliation)
+
+Known gaps that are not implemented at all:
+
+- projection workers and `projection_checkpoint`; the outbox has no drainer
+  outside normalization, and `src/archontos/projection/base.py` still raises
+  `NotImplementedError`
+- `action` / `action_run` persistence and the approval gate. `requires_approval`
+  is returned by `POST /v1/actions/report/propose` but never stored or enforced
+- API authentication and identity propagation. Every endpoint is currently open
+  (tracked as P3 in `docs/ROADMAP.md`)
 
 ## Architecture
 
@@ -65,8 +100,13 @@ pytest
 Run infrastructure:
 
 ```bash
-docker compose up -d postgres minio
+docker compose up -d postgres
+# optional S3-compatible artifact store (dev only, see docs/ARTIFACT-STORAGE.md):
+# docker compose --profile s3 up -d minio   # and ARCHONTOS_ARTIFACT_BACKEND=minio
 ```
+
+All published ports (Postgres, MinIO, apps 8001-8005) bind to `127.0.0.1`; the APIs have no
+authentication yet, so put an authenticating reverse proxy in front before exposing them.
 
 Run the ingestion API:
 

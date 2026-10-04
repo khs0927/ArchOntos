@@ -20,9 +20,12 @@ fetch official source
  -> persist raw artifact + hash
  -> source_document / source_version
  -> evidence_span
- -> assertion
- -> reviewed rule / rule_version + rule_assertion links
+ -> assertion candidate
+ -> human review
+ -> approved assertion compiler
+ -> rule / rule_version + rule_assertion links
  -> applicability
+ -> canonical query APIs
  -> projection jobs
 ```
 
@@ -58,6 +61,53 @@ Implemented API paths:
 
 Raw JSON is retained in a `RawSourceEnvelope` with deterministic SHA-256 before normalization. Body parsing preserves article units, addenda and attachments, including source-provided attachment links.
 
+## Current implementation status
+
+Implemented through the canonical MVP-0 read path:
+
+- immutable official-source artifact and `source_version` persistence
+- effective interval / supersession maintenance for source versions
+- deterministic article/paragraph/subparagraph/item/addendum/attachment evidence normalization
+- stable `evidence_key` and normalized text hash
+- assertion candidate idempotency and review history
+- PostgreSQL provenance guard tying assertions to their evidence/source version
+- approved-only safe rule compilation
+- rule lifecycle: approved -> active, contested/rejected -> suspended
+- compiled applicability persistence
+- evaluation and decision persistence bound to an explicit `rule_version`
+- canonical query executors for source evidence, authority, applicability, temporal comparison and jurisdiction comparison
+
+Not yet implemented, and not covered by the golden path:
+
+- projection workers; the outbox has no drainer outside normalization and
+  `src/archontos/projection/base.py` still raises `NotImplementedError`
+- `action` / `action_run` persistence and enforcement of the approval gate
+- API authentication and identity propagation (P3 in `docs/ROADMAP.md`)
+
+## Verification status
+
+The release ticket below was executed against a real PostgreSQL instance
+(`pgvector/pgvector:0.8.6-pg18`, the same image CI uses):
+
+- migrations 001-007 applied in order into a throwaway schema
+- the Golden Scenario end to end: ingest -> artifact -> source_version -> outbox
+  -> normalization -> evidence -> assertion -> review -> compile -> evaluate
+  -> decision -> query -> provenance traversal
+- step 10, idempotent reprocess of an identical fixture, asserted separately in
+  `tests/integration/test_mvp0_idempotency.py`: no new rows, no new outbox
+  work, unchanged evidence identity, cleared conflict flag
+- the same-MST/different-bytes case asserted against the real contract, which
+  is a recorded `conflict=True` plus a high-severity `quality_flag`, not an
+  exception
+
+Result: `pytest` passes 85 tests with the database configured, and degrades to
+80 passed / 5 skipped without one. `ruff check .` and `ruff format --check` are
+clean. This is local evidence; hosted CI has not run successfully yet because
+the GitHub Actions billing block is unresolved.
+
 ## Next implementation ticket
 
-Persist the raw envelope to MinIO, upsert `source_document/source_version/artifact` in one canonical transaction, and emit a domain event + outbox message for normalization/projection.
+Provision a drainer for the outbox topics that normalization does not own, and
+persist `action` / `action_run` so that `requires_approval` is enforced rather
+than merely returned. Both are prerequisites for the P3 release gate in
+`ops/RELEASE-CHECKLIST.md`, which is still entirely unchecked.
