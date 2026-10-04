@@ -214,10 +214,20 @@ class LawGoKrAdapter:
             attachment_root.get("별표단위") if isinstance(attachment_root, dict) else None
         )
 
-        mst = info.get("법령일련번호") or law.get("법령키") or envelope.params.get("MST")
+        # Request selectors are not evidence of the identity actually returned.
+        mst = info.get("법령일련번호") or law.get("법령키")
+        law_id = info.get("법령ID")
+        for selector, observed in (("MST", mst), ("ID", law_id)):
+            requested = envelope.params.get(selector)
+            if requested and observed in (None, ""):
+                raise SourceProtocolError(f"law.go.kr response is missing requested {selector}")
+            if requested and str(requested) != str(observed):
+                raise SourceProtocolError(
+                    f"law.go.kr returned a different {selector} than requested"
+                )
         return LawBody(
             law_name=str(info.get("법령명_한글") or info.get("법령명한글") or ""),
-            law_id=str(info.get("법령ID") or envelope.params.get("ID") or ""),
+            law_id=str(law_id or ""),
             mst=str(mst) if mst not in (None, "") else None,
             law_type=str(_content(info.get("법종구분")) or info.get("법령구분명") or ""),
             ministry=str(_content(info.get("소관부처")) or info.get("소관부처명") or ""),
