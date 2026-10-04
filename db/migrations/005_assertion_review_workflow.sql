@@ -34,6 +34,8 @@ BEGIN
     SELECT 1
     FROM pg_constraint
     WHERE conname = 'uq_evidence_span_id_source_version'
+      -- scoped to this schema's table: a same-named constraint in another schema must not skip it
+      AND conrelid = 'evidence_span'::regclass
   ) THEN
     ALTER TABLE evidence_span
       ADD CONSTRAINT uq_evidence_span_id_source_version
@@ -47,6 +49,7 @@ BEGIN
     SELECT 1
     FROM pg_constraint
     WHERE conname = 'assertion_evidence_source_fk'
+      AND conrelid = 'assertion'::regclass
   ) THEN
     ALTER TABLE assertion
       ADD CONSTRAINT assertion_evidence_source_fk

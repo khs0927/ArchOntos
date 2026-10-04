@@ -74,3 +74,15 @@ def test_app_services_share_minio_credentials_and_bind_loopback():
             assert env["ARCHONTOS_MINIO_ACCESS_KEY"] == minio_env["MINIO_ROOT_USER"], name
         if "ARCHONTOS_ARTIFACT_BACKEND" in env:
             assert _default(env["ARCHONTOS_ARTIFACT_BACKEND"]) == "local", name
+
+
+def test_migrations_run_through_the_runner_not_initdb():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    volumes = [str(v) for v in services["postgres"].get("volumes", [])]
+    assert not any("docker-entrypoint-initdb.d" in v for v in volumes)
+    assert services["migrate"]["command"] == ["python", "-m", "archontos.db.migrate"]
+    for name, service in services.items():
+        if service.get("build") and name != "migrate":
+            condition = service["depends_on"]["migrate"]["condition"]
+            assert condition == "service_completed_successfully", name

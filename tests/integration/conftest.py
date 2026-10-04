@@ -22,6 +22,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from archontos.db.migrate import apply_migrations
 from archontos.ingestion.adapters import LawGoKrAdapter, LawSearchItem, RawSourceEnvelope
 from archontos.ingestion.persistence import CanonicalLawRepository
 
@@ -70,8 +71,8 @@ async def mvp0_db(
     try:
         await admin.execute(f'CREATE SCHEMA "{schema}"')
         await admin.execute(f'SET search_path TO "{schema}", public')
-        for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
-            await admin.execute(migration.read_text(encoding="utf-8"))
+        # The same runner compose's `migrate` service uses (schema_migrations + advisory lock).
+        await apply_migrations(admin, MIGRATIONS_DIR)
 
         await _assert_schema_is_populated(admin, schema)
 
