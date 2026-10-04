@@ -40,10 +40,14 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
     if not isinstance(expr, dict):
         return _resolve(expr, facts)
     if len(expr) != 1:
-        return {key: evaluate_expr(value, facts) for key, value in expr.items()}
+        # A multi-key (or empty) object is not an operator expression. Evaluating it to a dict
+        # made any such condition truthy, so a malformed rule silently took its 'then' branch.
+        raise RuleEvaluationError(
+            "Expression must contain exactly one operator; wrap object values in {'literal': ...}"
+        )
 
     op, args = next(iter(expr.items()))
-    if op == "var":
+    if op in {"var", "literal"}:
         return _resolve(expr, facts)
 
     args_list = args if isinstance(args, list) else [args]
@@ -63,18 +67,38 @@ def evaluate_expr(expr: Any, facts: dict[str, Any]) -> Any:
         return resolved[0] == resolved[1]
     if op == "!=":
         return resolved[0] != resolved[1]
-    if op == ">=":
-        return resolved[0] >= resolved[1]
-    if op == "<=":
-        return resolved[0] <= resolved[1]
-    if op == ">":
-        return resolved[0] > resolved[1]
-    if op == "<":
-        return resolved[0] < resolved[1]
-    if op == "in":
-        return resolved[0] in resolved[1]
+    if op in _ORDERED_OPS:
+        return _ordered(op, resolved)
 
     raise RuleEvaluationError(f"Unsupported rule operator: {op}")
+
+
+_ORDERED_OPS = {
+    ">=": lambda a, b: a >= b,
+    "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b,
+    "<": lambda a, b: a < b,
+    "in": lambda a, b: a in b,
+}
+
+
+def _ordered(op: str, resolved: list[Any]) -> bool:
+    """Ordering / membership with fail-closed errors.
+
+    Comparing mismatched types (``"3" >= 2``, a missing fact ``None >= 2``, ``1 in 5``) raised a
+    bare TypeError, which the services turned into a 500 instead of a rule error the caller can fix.
+    """
+    if len(resolved) != 2:
+        raise RuleEvaluationError(
+            f"Operator '{op}' needs exactly two operands, got {len(resolved)}"
+        )
+    left, right = resolved
+    try:
+        return bool(_ORDERED_OPS[op](left, right))
+    except TypeError as exc:
+        raise RuleEvaluationError(
+            f"Operator '{op}' cannot compare {type(left).__name__} with {type(right).__name__}"
+        ) from exc
 
 
 def _render(value: Any, facts: dict[str, Any]) -> Any:
