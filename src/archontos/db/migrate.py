@@ -150,8 +150,15 @@ async def apply_migrations(
                 continue
             sql = m.sql
             if _SELF_TRANSACTIONAL.match(sql):
-                # The file carries its own BEGIN/COMMIT; record it right after it commits.
-                await conn.execute(sql)
+                # The file carries its own BEGIN/COMMIT; record it right after it commits. On error
+                # the script leaves its transaction open and aborted: roll it back so the session
+                # releases its locks (an aborted, open transaction blocks other sessions' DDL).
+                try:
+                    await conn.execute(sql)
+                except BaseException:
+                    if conn.is_in_transaction():
+                        await conn.execute("ROLLBACK")
+                    raise
                 await conn.execute(
                     "INSERT INTO schema_migrations(version, checksum) VALUES ($1, $2)",
                     m.version,
@@ -168,6 +175,8 @@ async def apply_migrations(
             done.append(m.version)
         return done
     finally:
+        if conn.is_in_transaction():
+            await conn.execute("ROLLBACK")
         await conn.execute("SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_KEY)
 
 

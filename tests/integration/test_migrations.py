@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -14,9 +15,28 @@ from archontos.db.migrate import MigrationError, apply_migrations, discover, sta
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _extensions_in_public(postgres_dsn):
+    """These tests keep two throwaway schemas alive at once. Migration 001's CREATE EXTENSION would
+    put pgvector into whichever schema runs first, and the second schema could not see the type, so
+    install the extensions in ``public`` (on every test search_path) up front."""
+
+    async def install():
+        conn = await asyncpg.connect(postgres_dsn)
+        try:
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
+        finally:
+            await conn.close()
+
+    asyncio.run(install())
+
+
 async def _schema_conn(dsn: str):
     schema = f"archontos_mig_{uuid4().hex}"
     conn = await asyncpg.connect(dsn)
+    # Fail instead of hanging forever if a broken test leaves a lock behind.
+    await conn.execute("SET lock_timeout = '30s'")
     await conn.execute(f'CREATE SCHEMA "{schema}"')
     await conn.execute(f'SET search_path TO "{schema}", public')
     return conn, schema
