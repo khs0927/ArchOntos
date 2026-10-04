@@ -42,7 +42,7 @@ This is deliberately lighter than full event sourcing: canonical tables remain t
 
 ## Security
 
-MVP development uses application authorization boundaries. `db/migrations/002_rls_template.sql` documents the production RLS pattern but is not enabled until authenticated identity claims are propagated into PostgreSQL session settings.
+MVP development uses application authorization boundaries. `db/templates/rls_policy_template.sql` documents the production RLS pattern but is not enabled until authenticated identity claims are propagated into PostgreSQL session settings.
 
 ABAC dimensions reserved by the domain model:
 

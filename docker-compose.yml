@@ -10,8 +10,8 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - archontos-postgres:/var/lib/postgresql/data
-      - ./db/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
-      - ./db/migrations/003_provenance_links.sql:/docker-entrypoint-initdb.d/003_provenance_links.sql:ro
+      # Plain SQL, applied in order on an EMPTY volume only (see db/MIGRATION-NOTES.md).
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U archontos -d archontos"]
       interval: 5s
@@ -19,7 +19,11 @@ services:
       retries: 20
 
   minio:
-    # Pinned: last official community image (the minio/minio image is no longer published).
+    # OPT-IN (docker compose --profile s3 ...). The default artifact backend is the local
+    # content-addressed store. MinIO community is source-only/archived upstream; this is the last
+    # official image and gets no further security fixes - keep it on loopback, dev only.
+    # See docs/ARTIFACT-STORAGE.md.
+    profiles: ["s3"]
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
@@ -32,13 +36,63 @@ services:
     volumes:
       - archontos-minio:/data
 
+  ingestion:
+    build: .
+    command: ["uvicorn", "apps.ingestion:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment: &app_env
+      ARCHONTOS_DATABASE_URL: postgresql+asyncpg://archontos:archontos@postgres:5432/archontos
+      # local (default) | minio. With minio, start with --profile s3 and set the same
+      # ARCHONTOS_MINIO_* values in .env (one source of truth with the minio service).
+      ARCHONTOS_ARTIFACT_BACKEND: ${ARCHONTOS_ARTIFACT_BACKEND:-local}
+      ARCHONTOS_ARTIFACT_LOCAL_PATH: /data/artifacts
+      ARCHONTOS_MINIO_ENDPOINT: minio:9000
+      ARCHONTOS_MINIO_ACCESS_KEY: ${ARCHONTOS_MINIO_ACCESS_KEY:-archontos}
+      ARCHONTOS_MINIO_SECRET_KEY: ${ARCHONTOS_MINIO_SECRET_KEY:-change-me}
+      ARCHONTOS_MINIO_BUCKET: ${ARCHONTOS_MINIO_BUCKET:-archontos}
+      ARCHONTOS_MINIO_SECURE: "false"
+      ARCHONTOS_LAWGO_OC: ${ARCHONTOS_LAWGO_OC:-}
+    volumes:
+      - archontos-artifacts:/data/artifacts
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+        required: false
+
+  normalization:
+    build: .
+    command: ["uvicorn", "apps.normalization:app", "--host", "0.0.0.0", "--port", "8002"]
+    environment: *app_env
+    volumes:
+      - archontos-artifacts:/data/artifacts
+    ports:
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+        required: false
+
   rule-engine:
     build: .
     command: ["uvicorn", "apps.rule_engine:app", "--host", "0.0.0.0", "--port", "8003"]
-    environment:
-      ARCHONTOS_DATABASE_URL: postgresql+asyncpg://archontos:archontos@postgres:5432/archontos
+    environment: *app_env
     ports:
-      - "8003:8003"
+      - "127.0.0.1:8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  projection:
+    build: .
+    command: ["uvicorn", "apps.projection:app", "--host", "0.0.0.0", "--port", "8004"]
+    environment: *app_env
+    ports:
+      - "127.0.0.1:8004:8004"
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,14 +100,14 @@ services:
   action:
     build: .
     command: ["uvicorn", "apps.action:app", "--host", "0.0.0.0", "--port", "8005"]
-    environment:
-      ARCHONTOS_DATABASE_URL: postgresql+asyncpg://archontos:archontos@postgres:5432/archontos
+    environment: *app_env
     ports:
-      - "8005:8005"
+      - "127.0.0.1:8005:8005"
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   archontos-postgres:
+  archontos-artifacts:
   archontos-minio:

@@ -46,7 +46,15 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "S", "BLE"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["archontos"]
+
+[tool.ruff.lint.per-file-ignores]
+# The security rules are enabled for product code. In tests and in the offline
+# contract harness they fire on the pytest idioms themselves rather than on
+# anything an attacker could reach: assert, and a helper that builds a count
+# query from a module constant.
+"tests/**" = ["S101", "S105", "S106", "S107", "S603", "S608"]
+"docs/**" = ["S101", "S603"]

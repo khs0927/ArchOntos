@@ -66,11 +66,10 @@ def test_rule_engine_api_returns_422_for_invalid_rules():
     "condition",
     [
         {">=": [{"var": "stair.label"}, 2]},  # str vs int
-        {"<": [{"var": "stair.missing"}, 2]},  # missing fact (None) vs int
         {"in": [1, {"var": "stair.direct_count"}]},  # membership in an int
         {">": [1, 2, 3]},  # wrong arity
     ],
-    ids=["str-vs-int", "missing-fact", "in-non-container", "arity"],
+    ids=["str-vs-int", "in-non-container", "arity"],
 )
 def test_type_mismatch_is_a_rule_error_not_a_crash(condition):
     with pytest.raises(RuleEvaluationError, match="Operator"):
@@ -96,3 +95,25 @@ def test_numeric_comparisons_still_mix_int_and_float():
     rule = _rule({">=": [{"var": "stair.width"}, 1.2]})
     assert evaluate_rule(rule, {"stair": {"width": 2}}).outcome is DecisionOutcome.PASS
     assert evaluate_rule(_rule({"in": ["KR", ["KR", "JP"]]}), {}).outcome is DecisionOutcome.PASS
+
+
+def test_missing_fact_needs_review_instead_of_a_verdict():
+    result = evaluate_rule(
+        _rule({"<": [{"var": "stair.missing"}, 2]}), {"stair": {"direct_count": 1}}
+    )
+    assert result.outcome == DecisionOutcome.REVIEW
+    assert "stair" in result.details["error"] or "missing" in result.details["error"]
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {"==": [1]},
+        {"!=": [1, 2, 3]},
+        {"not": [True, False]},
+    ],
+    ids=["eq-one-operand", "ne-three-operands", "not-two-operands"],
+)
+def test_equality_and_not_operand_count_is_checked(condition):
+    with pytest.raises(RuleEvaluationError, match="needs exactly"):
+        evaluate_rule(_rule(condition), {"stair": {"direct_count": 1}})

@@ -56,3 +56,21 @@ def test_infrastructure_ports_are_loopback_and_images_pinned():
             assert str(port).startswith("127.0.0.1:"), (name, port)
         image = services[name]["image"]
         assert ":" in image and not image.endswith(":latest"), image
+
+
+def test_app_services_share_minio_credentials_and_bind_loopback():
+    services = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    minio_env = services["minio"]["environment"]
+    assert services["minio"].get("profiles") == ["s3"]  # opt-in, see docs/ARTIFACT-STORAGE.md
+    apps = [name for name, svc in services.items() if svc.get("build")]
+    assert apps, "expected application services"
+    for name in apps:
+        svc = services[name]
+        for port in svc.get("ports", []):
+            assert str(port).startswith("127.0.0.1:"), (name, port)
+        env = svc.get("environment") or {}
+        if "ARCHONTOS_MINIO_SECRET_KEY" in env:
+            assert env["ARCHONTOS_MINIO_SECRET_KEY"] == minio_env["MINIO_ROOT_PASSWORD"], name
+            assert env["ARCHONTOS_MINIO_ACCESS_KEY"] == minio_env["MINIO_ROOT_USER"], name
+        if "ARCHONTOS_ARTIFACT_BACKEND" in env:
+            assert _default(env["ARCHONTOS_ARTIFACT_BACKEND"]) == "local", name

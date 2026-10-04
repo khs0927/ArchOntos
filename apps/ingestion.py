@@ -8,7 +8,7 @@ from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.ingestion.adapters import LawGoKrAdapter, SourceAdapterError
 from archontos.ingestion.contracts import NormalizedLegalVersion
-from archontos.ingestion.persistence import SourceVersionConflict
+from archontos.ingestion.persistence import CanonicalizationError, SourceVersionConflict
 from archontos.ingestion.service import LawIngestionService, LawNotFoundError
 from archontos.storage.artifacts import LocalArtifactStore, MinioArtifactStore
 
@@ -100,6 +100,11 @@ async def ingest_lawgo_current(query: Annotated[str, Query(min_length=1)]):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SourceVersionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except CanonicalizationError as exc:
+        # A malformed or unverifiable official document is a bad request, not a
+        # server fault. It must not be retried either: the input is not
+        # transient, and retrying re-fetches the same wrong body.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SourceAdapterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
