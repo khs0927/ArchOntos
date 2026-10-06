@@ -33,7 +33,6 @@ def test_authority_is_categorical_not_confidence():
     assert not hasattr(contract, "authority_confidence")
 
 
-
 def test_legal_assertion_can_reference_stable_ontology_subject():
     subject = AecSubjectRef(
         project_id="P-001",
