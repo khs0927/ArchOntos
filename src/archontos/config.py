@@ -27,12 +27,23 @@ class Settings(BaseSettings):
     lawgo_base_url: str = "https://www.law.go.kr/DRF"
     # Empty means open, matching local MVP-0. Set a comma-separated list to require X-API-Key.
     api_keys: str = ""
+    # Empty disables authorization. Otherwise actor:role+role,... (see archontos.authz).
+    actor_roles: str = ""
+    # Optional per-actor jurisdictions for row-level security: actor:KR+JP,...
+    actor_jurisdictions: str = ""
     # memory keeps the smoke path DB-free. postgres is the canonical action/projection backend.
     action_backend: Literal["memory", "postgres"] = "memory"
     # none keeps embedding NULL; hashing is deterministic; fastembed needs the [embeddings] extra.
     embedder: Literal["none", "hashing", "fastembed"] = "none"
+    # Startup check that the service DB login cannot bypass row-level security.
+    # off: skip | warn: log (default) | enforce: refuse to start (production, Helm default).
+    db_privilege_check: Literal["off", "warn", "enforce"] = "warn"
     embedding_model: str | None = None
     embedding_cache_dir: str | None = None
+    # Query-time HNSW tuning (pgvector). ef_search is raised to cover offset+limit per page.
+    hnsw_ef_search: int = Field(default=40, ge=1, le=1000)
+    hnsw_iterative_scan: Literal["off", "strict_order", "relaxed_order"] = "strict_order"
+    hnsw_max_scan_tuples: int = Field(default=20000, ge=1)
 
     @model_validator(mode="after")
     def _no_placeholder_secret_outside_dev(self) -> "Settings":

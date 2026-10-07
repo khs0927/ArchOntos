@@ -5,7 +5,8 @@ from uuid import UUID
 
 from fastapi import HTTPException, Query
 
-from apps.common import create_service
+from apps.common import create_service, require
+from archontos.authz import Permission
 from archontos.db.session import get_session_factory
 from archontos.domain.contracts import RuleEvaluationRequest, RuleEvaluationResult
 from archontos.observability import RULE_EVAL_LATENCY
@@ -43,7 +44,11 @@ def _queries() -> CanonicalQueryService:
     return CanonicalQueryService(session_factory=get_session_factory())
 
 
-@app.post("/v1/evaluate", response_model=RuleEvaluationResult)
+@app.post(
+    "/v1/evaluate",
+    dependencies=[require(Permission.QUERY_READ)],
+    response_model=RuleEvaluationResult,
+)
 async def evaluate(payload: RuleEvaluationRequest):
     started = perf_counter()
     try:
@@ -54,6 +59,7 @@ async def evaluate(payload: RuleEvaluationRequest):
 
 @app.post(
     "/v1/rules/evaluate/{rule_version_id}",
+    dependencies=[require(Permission.QUERY_READ)],
     response_model=CanonicalEvaluationView,
 )
 async def evaluate_canonical_rule(
@@ -89,7 +95,11 @@ async def evaluate_canonical_rule(
     )
 
 
-@app.post("/v1/rules/compile/{assertion_id}", response_model=RuleCompilationView)
+@app.post(
+    "/v1/rules/compile/{assertion_id}",
+    dependencies=[require(Permission.RULE_COMPILE)],
+    response_model=RuleCompilationView,
+)
 async def compile_assertion(assertion_id: UUID):
     service = RuleCompilationService(session_factory=get_session_factory())
     try:
@@ -110,7 +120,11 @@ async def compile_assertion(assertion_id: UUID):
     )
 
 
-@app.get("/v1/query/classify", response_model=QueryClassificationView)
+@app.get(
+    "/v1/query/classify",
+    dependencies=[require(Permission.QUERY_READ)],
+    response_model=QueryClassificationView,
+)
 async def classify_query(query: Annotated[str, Query(min_length=1)]):
     return QueryClassificationView(
         query=query,
@@ -120,6 +134,7 @@ async def classify_query(query: Annotated[str, Query(min_length=1)]):
 
 @app.get(
     "/v1/query/source-evidence/{rule_version_id}",
+    dependencies=[require(Permission.QUERY_READ)],
     response_model=SourceEvidenceView,
 )
 async def query_source_evidence(rule_version_id: UUID):
@@ -131,6 +146,7 @@ async def query_source_evidence(rule_version_id: UUID):
 
 @app.get(
     "/v1/query/decision-provenance/{decision_id}",
+    dependencies=[require(Permission.QUERY_READ)],
     response_model=DecisionProvenanceView,
 )
 async def query_decision_provenance(decision_id: UUID):
@@ -142,6 +158,7 @@ async def query_decision_provenance(decision_id: UUID):
 
 @app.get(
     "/v1/query/authority/{rule_version_id}",
+    dependencies=[require(Permission.QUERY_READ)],
     response_model=AuthorityClassificationView,
 )
 async def query_authority(rule_version_id: UUID):
@@ -153,6 +170,7 @@ async def query_authority(rule_version_id: UUID):
 
 @app.get(
     "/v1/query/applicability/{rule_version_id}",
+    dependencies=[require(Permission.QUERY_READ)],
     response_model=ApplicabilityView,
 )
 async def query_applicability(rule_version_id: UUID):
@@ -162,7 +180,11 @@ async def query_applicability(rule_version_id: UUID):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/v1/query/temporal", response_model=TemporalComparisonView)
+@app.get(
+    "/v1/query/temporal",
+    dependencies=[require(Permission.QUERY_READ)],
+    response_model=TemporalComparisonView,
+)
 async def query_temporal_comparison(
     source_key: Annotated[str, Query(min_length=1)],
     left_date: date,
@@ -180,7 +202,11 @@ async def query_temporal_comparison(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@app.get("/v1/query/jurisdiction", response_model=JurisdictionComparisonView)
+@app.get(
+    "/v1/query/jurisdiction",
+    dependencies=[require(Permission.QUERY_READ)],
+    response_model=JurisdictionComparisonView,
+)
 async def query_jurisdiction_comparison(
     rule_title: Annotated[str, Query(min_length=1)],
     left_jurisdiction: Annotated[str, Query(min_length=2)],

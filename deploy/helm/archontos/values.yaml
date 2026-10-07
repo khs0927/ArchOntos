@@ -28,6 +28,10 @@ services:
 env:
   ARCHONTOS_ENV: production
   ARCHONTOS_OTEL_ENABLED: "true"
+  # Refuse to start if ARCHONTOS_DATABASE_URL logs in as a superuser/BYPASSRLS/owner role.
+  # Provision the login with `python -m archontos.db.roles ensure-login` (member of
+  # archontos_app); run migrations with a separate migrator credential.
+  ARCHONTOS_DB_PRIVILEGE_CHECK: enforce
 
 # Database, object storage and secret values are intentionally externalized.
 # Use External Secrets / Vault / platform secret management in production.
