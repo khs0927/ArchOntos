@@ -61,3 +61,16 @@ known-first-party = ["archontos"]
 # query from a module constant.
 "tests/**" = ["S101", "S105", "S106", "S107", "S603", "S608"]
 "docs/**" = ["S101", "S603"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "apps"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# Third-party packages without type information.
+module = ["minio.*", "fastembed.*", "asyncpg.*", "pgvector.*"]
+ignore_missing_imports = true
