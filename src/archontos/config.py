@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     lawgo_oc: str | None = None
     lawgo_base_url: str = "https://www.law.go.kr/DRF"
+    # Empty means open, matching local MVP-0. Set a comma-separated list to require X-API-Key.
+    api_keys: str = ""
+    # memory keeps the smoke path DB-free. postgres is the canonical action/projection backend.
+    action_backend: str = "memory"
 
     @model_validator(mode="after")
     def _no_placeholder_secret_outside_dev(self) -> "Settings":

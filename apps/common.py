@@ -3,8 +3,12 @@ from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
+from archontos.config import get_settings
 from archontos.ingestion.persistence import CanonicalizationError
+from archontos.observability import REQUEST_COUNT
 from archontos.rules.engine import RuleEvaluationError
+
+OPEN_PATHS = {"/health", "/metrics"}
 
 
 async def _unprocessable(_request: Request, exc: Exception) -> JSONResponse:
@@ -17,6 +21,18 @@ def create_service(name: str) -> FastAPI:
     app = FastAPI(title=f"ArchOntos {name}", version="0.1.0")
     app.add_exception_handler(RuleEvaluationError, _unprocessable)
     app.add_exception_handler(CanonicalizationError, _unprocessable)
+
+    @app.middleware("http")
+    async def _observe(request: Request, call_next):
+        settings = get_settings()
+        keys = [item.strip() for item in settings.api_keys.split(",") if item.strip()]
+        if keys and request.url.path not in OPEN_PATHS:
+            presented = request.headers.get("x-api-key", "")
+            if presented not in keys:
+                return JSONResponse(status_code=401, content={"detail": "missing or invalid api key"})
+        response = await call_next(request)
+        REQUEST_COUNT.labels(service=name, route=request.url.path).inc()
+        return response
 
     @app.get("/health", tags=["system"])
     async def health():

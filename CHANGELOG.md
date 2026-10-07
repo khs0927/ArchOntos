@@ -1,4 +1,10 @@
-# Changelog
+## Unreleased
+
+- Persist report proposals and enforce the approval gate before `action_run`.
+- Drain `domain_event` into `embedding_projection` with a rebuildable checkpoint.
+- Increment `archontos_http_requests_total`. Optional `ARCHONTOS_API_KEYS`.
+- Hyperedge create path and Helm ServiceAccount / NetworkPolicy skeleton.
+
 
 ## 2026-09-25
 - ArchOntos 현재 상태를 기준으로 업그레이드 패키지 작성

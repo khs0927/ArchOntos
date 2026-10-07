@@ -13,7 +13,9 @@ spec:
     metadata:
       labels:
         app: archontos-{{ $name }}
+        app.kubernetes.io/name: archontos
     spec:
+      serviceAccountName: archontos
       containers:
         - name: {{ $name }}
           image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
