@@ -136,7 +136,8 @@ class PostgresActionStore:
                     after={"status": "proposed", "action_type": proposal.action_type},
                 )
         loaded = await self.get(action_id)
-        assert loaded is not None
+        if loaded is None:
+            raise RuntimeError("row vanished after commit")
         return loaded
 
     async def get(self, action_id: str) -> StoredAction | None:
@@ -175,9 +176,7 @@ class PostgresActionStore:
             proposed_output=dict(row.proposed_output_json),
             status=row.status,
             requires_approval=bool(row.requires_approval),
-            runs=[
-                {"result": item.result_json, "error": item.error_json} for item in runs
-            ],
+            runs=[{"result": item.result_json, "error": item.error_json} for item in runs],
         )
 
     async def approve(self, action_id: str, actor: str) -> StoredAction:
@@ -205,9 +204,7 @@ class PostgresActionStore:
                 ).first()
                 if row is None:
                     raise KeyError(action_id)
-                assert_can_execute(
-                    status=row.status, requires_approval=bool(row.requires_approval)
-                )
+                assert_can_execute(status=row.status, requires_approval=bool(row.requires_approval))
                 await session.execute(
                     text("UPDATE action SET status = 'running' WHERE id = CAST(:id AS uuid)"),
                     {"id": action_id},
@@ -238,7 +235,9 @@ class PostgresActionStore:
                     ),
                     {
                         "id": action_id,
-                        "output": json.dumps({**dict(row.proposed_output_json), "status": "generated"}),
+                        "output": json.dumps(
+                            {**dict(row.proposed_output_json), "status": "generated"}
+                        ),
                     },
                 )
                 await self._audit(
@@ -249,7 +248,8 @@ class PostgresActionStore:
                     after={"status": "succeeded"},
                 )
         loaded = await self.get(action_id)
-        assert loaded is not None
+        if loaded is None:
+            raise RuntimeError("row vanished after commit")
         return loaded
 
     async def _transition(
@@ -291,7 +291,8 @@ class PostgresActionStore:
                     after={"status": to_status, "reason": reason},
                 )
         loaded = await self.get(action_id)
-        assert loaded is not None
+        if loaded is None:
+            raise RuntimeError("row vanished after commit")
         return loaded
 
     @staticmethod

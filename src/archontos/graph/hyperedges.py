@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -72,8 +73,6 @@ class PostgresHyperedgeStore:
         members: list[HyperedgeMember],
         properties: dict | None = None,
     ) -> Hyperedge:
-        import json
-
         async with self.session_factory() as session:
             async with session.begin():
                 created = await session.execute(
@@ -94,7 +93,9 @@ class PostgresHyperedgeStore:
                     await session.execute(
                         text(
                             """
-                            INSERT INTO hyperedge_member(hyperedge_id, role, ref_type, ref_id, ordinal)
+                            INSERT INTO hyperedge_member(
+                                hyperedge_id, role, ref_type, ref_id, ordinal
+                            )
                             VALUES (CAST(:id AS uuid), :role, :ref_type, :ref_id, :ordinal)
                             ON CONFLICT (hyperedge_id, role, ref_type, ref_id) DO NOTHING
                             """
@@ -108,7 +109,8 @@ class PostgresHyperedgeStore:
                         },
                     )
         loaded = await self.get(hyperedge_id)
-        assert loaded is not None
+        if loaded is None:
+            raise RuntimeError("row vanished after commit")
         return loaded
 
     async def get(self, hyperedge_id: str) -> Hyperedge | None:
@@ -144,7 +146,9 @@ class PostgresHyperedgeStore:
             hyperedge_type=head.hyperedge_type,
             properties=dict(head.properties_json),
             members=[
-                HyperedgeMember(role=item.role, ref_type=item.ref_type, ref_id=item.ref_id, ordinal=item.ordinal)
+                HyperedgeMember(
+                    role=item.role, ref_type=item.ref_type, ref_id=item.ref_id, ordinal=item.ordinal
+                )
                 for item in members
             ],
         )

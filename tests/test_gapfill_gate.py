@@ -1,11 +1,11 @@
+import pytest
+
 from archontos.actions.gate import ApprovalDenied, assert_can_execute, can_execute
 from archontos.actions.persistence import MemoryActionStore
 from archontos.actions.service import propose_report
 from archontos.graph.hyperedges import HyperedgeMember, MemoryHyperedgeStore
 from archontos.projection.base import ProjectionEvent
 from archontos.projection.embedding import EmbeddingTextProjection
-
-import pytest
 
 
 def test_report_cannot_run_until_approved():

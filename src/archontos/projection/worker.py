@@ -25,11 +25,15 @@ class ProjectionWorker:
     drainer: it reads the immutable event log, not a second bus.
     """
 
-    def __init__(self, session_factory: async_sessionmaker, projection: EmbeddingTextProjection | None = None):
+    def __init__(
+        self, session_factory: async_sessionmaker, projection: EmbeddingTextProjection | None = None
+    ):
         self.session_factory = session_factory
         self.projection = projection or EmbeddingTextProjection()
 
     async def process_batch(self, limit: int = 100) -> ProjectionBatchResult:
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
         async with self.session_factory() as session:
             async with session.begin():
                 checkpoint = await session.execute(
@@ -69,14 +73,16 @@ class ProjectionWorker:
                         payload=dict(row.payload_json),
                     )
                     await self.projection.apply(event)
-                    projected = self.projection.rows[
+                    # Pop, so a long-lived worker does not accumulate every event in memory.
+                    projected = self.projection.rows.pop(
                         f"{event.aggregate_type}:{event.aggregate_id}:{event.sequence}"
-                    ]
+                    )
                     await session.execute(
                         text(
                             """
                             INSERT INTO embedding_projection(
-                                projection_key, source_type, source_id, content, canonical_updated_at
+                                projection_key, source_type, source_id, content,
+                                canonical_updated_at
                             )
                             VALUES (
                                 :key, :source_type, :source_id, :content, now()
@@ -113,11 +119,14 @@ class ProjectionWorker:
                             SET status = 'published', published_at = now()
                             WHERE status = 'pending'
                               AND topic LIKE 'projection.%'
-                              AND id <= (
-                                SELECT COALESCE(MAX(id), 0) FROM outbox_message
+                              AND event_id IN (
+                                SELECT event_id FROM domain_event
+                                WHERE sequence <= :last_sequence
                               )
                             """
-                        )
+                        ),
+                        # Only acknowledge messages whose events this batch actually covered.
+                        {"last_sequence": last_sequence},
                     )
         return ProjectionBatchResult(
             projection=self.projection.name,
@@ -141,9 +150,19 @@ class ProjectionWorker:
                     ),
                     {"name": self.projection.name},
                 )
-        drained = await self.process_batch(limit=limit)
-        drained.reset = True
-        return drained
+        # Replay the whole log in ``limit``-sized transactions so a rebuild is complete.
+        applied = 0
+        while True:
+            batch = await self.process_batch(limit=limit)
+            applied += batch.applied
+            if batch.applied < limit:
+                break
+        return ProjectionBatchResult(
+            projection=self.projection.name,
+            applied=applied,
+            last_sequence=batch.last_sequence,
+            reset=True,
+        )
 
     async def status(self) -> dict:
         async with self.session_factory() as session:
@@ -166,7 +185,10 @@ class ProjectionWorker:
             "event_transport": "transactional-outbox",
             "checkpoint": None
             if row is None
-            else {"last_sequence": int(row.last_sequence), "updated_at": row.updated_at.isoformat()},
+            else {
+                "last_sequence": int(row.last_sequence),
+                "updated_at": row.updated_at.isoformat(),
+            },
         }
 
 

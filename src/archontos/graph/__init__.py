@@ -1,4 +1,9 @@
-from archontos.graph.hyperedges import Hyperedge, HyperedgeMember, MemoryHyperedgeStore, PostgresHyperedgeStore
+from archontos.graph.hyperedges import (
+    Hyperedge,
+    HyperedgeMember,
+    MemoryHyperedgeStore,
+    PostgresHyperedgeStore,
+)
 
 __all__ = [
     "Hyperedge",
