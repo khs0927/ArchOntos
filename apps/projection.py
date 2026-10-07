@@ -13,6 +13,7 @@ from archontos.graph.hyperedges import (
     PostgresHyperedgeStore,
 )
 from archontos.projection.embedder import Embedder, build_embedder
+from archontos.projection.search import MAX_LIMIT, similar
 from archontos.projection.worker import ProjectionWorker
 
 app = create_service("projection")
@@ -26,6 +27,13 @@ class HyperedgeMemberRequest(BaseModel):
     ref_type: str = Field(min_length=1)
     ref_id: str = Field(min_length=1)
     ordinal: int = Field(default=0, ge=0)
+
+
+class SimilarityRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=8000)
+    limit: int = Field(default=10, ge=1, le=MAX_LIMIT)
+    source_type: str | None = Field(default=None, min_length=1)
+    min_score: float | None = Field(default=None, ge=-1, le=1)
 
 
 class HyperedgeRequest(BaseModel):
@@ -131,3 +139,25 @@ def _is_uuid(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+@app.post("/v1/search/similar")
+async def similar_search(payload: SimilarityRequest):
+    _require_postgres("similarity search")
+    embedder = _embedder()
+    if embedder is None:
+        raise HTTPException(
+            status_code=409,
+            detail="similarity search requires ARCHONTOS_EMBEDDER (hashing|fastembed)",
+        )
+    if not payload.query.strip():
+        raise HTTPException(status_code=422, detail="query must not be blank")
+    hits = await similar(
+        get_session_factory(),
+        embedder,
+        payload.query,
+        limit=payload.limit,
+        source_type=payload.source_type,
+        min_score=payload.min_score,
+    )
+    return {"embedding_model": embedder.model_id, "hits": [hit.as_api() for hit in hits]}
