@@ -44,6 +44,7 @@ Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; def
 - action / action_run persistence and the approval gate (`POST /v1/actions/{id}/approve|reject|execute`). A report cannot run from `proposed` while `requires_approval` is true
 - projection worker (`src/archontos/projection/worker.py`) replays `domain_event` into `embedding_projection` and advances `projection_checkpoint` (`POST /v1/projections/drain`, `/rebuild`)
 - `REQUEST_COUNT` is incremented per request
+- similarity search: `POST /v1/search/similar` over `embedding_projection` (HNSW, migration 010)
 - embeddings: `ARCHONTOS_EMBEDDER=fastembed` (`pip install 'archontos[embeddings]'`, multilingual
   ONNX model, no torch) or `hashing` (deterministic, dependency-free). Default `none` keeps
   `embedding` NULL. Vectors are L2-normalised, zero-padded to `vector(1536)`, and tagged with
@@ -54,7 +55,9 @@ Still incomplete:
 
 - Helm has a ServiceAccount, NetworkPolicy (set `networkPolicy.extraEgress` for the database)
   and optional per-service HPA (`autoscaling.enabled`); no GitOps reconciliation yet
-- identity propagation beyond a shared API key (RLS, per-user actor) is still P3
+- identity: named API keys (`actor:key`) give a per-request actor recorded on actions and the
+  audit log, and `audit_log` is append-only under RLS. Still P3: per-actor roles/authorization,
+  jurisdiction RLS (`db/templates/rls_policy_template.sql`) and an external identity provider
 
 ## Architecture
 
