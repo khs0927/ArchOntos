@@ -12,6 +12,7 @@ from archontos.actions.service import propose_report
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.domain.enums import QueryIntent
+from archontos.identity import InvalidActor, current_actor, current_principal, validate_actor
 from archontos.query.router import Mvp0QueryRouter
 
 app = create_service("action")
@@ -29,8 +30,23 @@ class ReportProposeRequest(BaseModel):
 
 
 class DecisionRequest(BaseModel):
-    actor: str = Field(min_length=1)
+    # Optional: an authenticated (named API key) request always acts as its own identity.
+    actor: str | None = Field(default=None, min_length=1, max_length=128)
     reason: str = ""
+
+
+def _effective_actor(requested: str | None) -> str:
+    principal = current_principal()
+    if principal is not None and principal.authenticated:
+        if requested is not None and requested != principal.actor:
+            raise HTTPException(status_code=403, detail="actor does not match the api key")
+        return principal.actor
+    if requested is not None:
+        try:
+            return validate_actor(requested)
+        except InvalidActor as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return current_actor(default="anonymous")
 
 
 def _store():
@@ -49,7 +65,7 @@ async def classify_query(payload: QueryRequest):
 @app.post("/v1/actions/report/propose")
 async def report_proposal(payload: ReportProposeRequest):
     proposal = propose_report(payload.target_refs, payload.context)
-    stored = await _store().propose(proposal)
+    stored = await _store().propose(proposal, created_by=current_actor(default="anonymous"))
     body = stored.as_api()
     # Keep the pre-persistence contract the smoke test asserts.
     body["proposed_output"]["status"] = "proposal"
@@ -88,14 +104,14 @@ async def get_action(action_id: str):
 
 @app.post("/v1/actions/{action_id}/approve")
 async def approve_action(action_id: str, payload: DecisionRequest):
-    return await _decide("approve", action_id, payload.actor)
+    return await _decide("approve", action_id, _effective_actor(payload.actor))
 
 
 @app.post("/v1/actions/{action_id}/reject")
 async def reject_action(action_id: str, payload: DecisionRequest):
-    return await _decide("reject", action_id, payload.actor, payload.reason)
+    return await _decide("reject", action_id, _effective_actor(payload.actor), payload.reason)
 
 
 @app.post("/v1/actions/{action_id}/execute")
 async def execute_action(action_id: str, payload: DecisionRequest):
-    return await _decide("execute", action_id, payload.actor)
+    return await _decide("execute", action_id, _effective_actor(payload.actor))

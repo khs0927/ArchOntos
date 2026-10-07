@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from archontos.actions.gate import ApprovalDenied, assert_can_execute
 from archontos.actions.service import ProposedAction
+from archontos.identity import bind_actor
 
 
 @dataclass(slots=True)
@@ -22,6 +23,7 @@ class StoredAction:
     status: str
     requires_approval: bool
     runs: list[dict[str, Any]] = field(default_factory=list)
+    created_by: str = "system"
 
     def as_api(self) -> dict[str, Any]:
         return {
@@ -33,6 +35,7 @@ class StoredAction:
             "status": self.status,
             "requires_approval": self.requires_approval,
             "runs": self.runs,
+            "created_by": self.created_by,
         }
 
 
@@ -42,7 +45,7 @@ class MemoryActionStore:
     def __init__(self) -> None:
         self._rows: dict[str, StoredAction] = {}
 
-    async def propose(self, proposal: ProposedAction) -> StoredAction:
+    async def propose(self, proposal: ProposedAction, created_by: str = "system") -> StoredAction:
         row = StoredAction(
             id=str(uuid4()),
             action_type=proposal.action_type,
@@ -51,6 +54,7 @@ class MemoryActionStore:
             proposed_output=dict(proposal.proposed_output),
             status="proposed",
             requires_approval=proposal.requires_approval,
+            created_by=created_by,
         )
         self._rows[row.id] = row
         return row
@@ -102,19 +106,21 @@ class PostgresActionStore:
     def __init__(self, session_factory: async_sessionmaker):
         self.session_factory = session_factory
 
-    async def propose(self, proposal: ProposedAction) -> StoredAction:
+    async def propose(self, proposal: ProposedAction, created_by: str = "system") -> StoredAction:
         async with self.session_factory() as session:
             async with session.begin():
+                await bind_actor(session, created_by)
                 inserted = await session.execute(
                     text(
                         """
                         INSERT INTO action(
                             action_type, target_refs_json, input_json,
-                            proposed_output_json, status, requires_approval
+                            proposed_output_json, status, requires_approval, created_by
                         )
                         VALUES (
                             :action_type, CAST(:targets AS jsonb), CAST(:input_json AS jsonb),
-                            CAST(:output_json AS jsonb), 'proposed', :requires_approval
+                            CAST(:output_json AS jsonb), 'proposed', :requires_approval,
+                            :created_by
                         )
                         RETURNING id::text
                         """
@@ -125,12 +131,13 @@ class PostgresActionStore:
                         "input_json": json.dumps(proposal.input_payload, sort_keys=True),
                         "output_json": json.dumps(proposal.proposed_output, sort_keys=True),
                         "requires_approval": proposal.requires_approval,
+                        "created_by": created_by,
                     },
                 )
                 action_id = inserted.scalar_one()
                 await self._audit(
                     session,
-                    actor="system",
+                    actor=created_by,
                     action="propose",
                     target_id=action_id,
                     after={"status": "proposed", "action_type": proposal.action_type},
@@ -147,7 +154,7 @@ class PostgresActionStore:
                     text(
                         """
                         SELECT id::text, action_type, target_refs_json, input_json,
-                               proposed_output_json, status, requires_approval
+                               proposed_output_json, status, requires_approval, created_by
                         FROM action WHERE id = CAST(:id AS uuid)
                         """
                     ),
@@ -176,6 +183,7 @@ class PostgresActionStore:
             proposed_output=dict(row.proposed_output_json),
             status=row.status,
             requires_approval=bool(row.requires_approval),
+            created_by=row.created_by,
             runs=[{"result": item.result_json, "error": item.error_json} for item in runs],
         )
 
@@ -190,6 +198,7 @@ class PostgresActionStore:
     async def execute(self, action_id: str, actor: str) -> StoredAction:
         async with self.session_factory() as session:
             async with session.begin():
+                await bind_actor(session, actor)
                 row = (
                     await session.execute(
                         text(
@@ -263,6 +272,7 @@ class PostgresActionStore:
         allowed = (expect,) if isinstance(expect, str) else expect
         async with self.session_factory() as session:
             async with session.begin():
+                await bind_actor(session, actor)
                 row = (
                     await session.execute(
                         text(
