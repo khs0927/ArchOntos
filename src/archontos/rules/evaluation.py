@@ -212,7 +212,7 @@ class CanonicalEvaluationRepository:
                 "payload_json": json.dumps(event_payload, sort_keys=True),
             },
         )
-        event_id = event_result.scalar_one()
+        event_id: UUID = event_result.scalar_one()
         await self.session.execute(
             text(
                 """
