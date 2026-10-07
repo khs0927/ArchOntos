@@ -59,7 +59,10 @@ jobs:
             python -m archontos.db.roles ensure-login --name archontos_svc --dsn "$dsn"
           svc=postgresql://archontos_svc:ci-svc@localhost:5432/archontos
           docker run --rm --network host archontos:ci python -m archontos.db.roles check --dsn "$svc"
-          ! docker run --rm --network host archontos:ci python -m archontos.db.roles check --dsn "$dsn"
+          # `! cmd` is exempt from errexit, so assert the expected failure explicitly.
+          if docker run --rm --network host archontos:ci python -m archontos.db.roles check --dsn "$dsn"; then
+            echo "superuser DSN passed the privilege check" >&2; exit 1
+          fi
           # The image must start each service module (import-time errors surface here).
           for m in ingestion normalization rule_engine projection action; do
             docker run --rm archontos:ci python -c "import apps.$m"

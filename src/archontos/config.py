@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     db_privilege_check: Literal["off", "warn", "enforce"] = "warn"
     embedding_model: str | None = None
     embedding_cache_dir: str | None = None
+    # Query-time HNSW tuning (pgvector). ef_search is raised to cover offset+limit per page.
+    hnsw_ef_search: int = Field(default=40, ge=1, le=1000)
+    hnsw_iterative_scan: Literal["off", "strict_order", "relaxed_order"] = "strict_order"
+    hnsw_max_scan_tuples: int = Field(default=20000, ge=1)
 
     @model_validator(mode="after")
     def _no_placeholder_secret_outside_dev(self) -> "Settings":

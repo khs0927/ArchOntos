@@ -14,7 +14,7 @@ from archontos.graph.hyperedges import (
     PostgresHyperedgeStore,
 )
 from archontos.projection.embedder import Embedder, build_embedder
-from archontos.projection.search import MAX_LIMIT, similar
+from archontos.projection.search import MAX_LIMIT, HnswQueryOptions, InvalidCursor, similar_page
 from archontos.projection.worker import ProjectionWorker
 
 app = create_service("projection")
@@ -35,6 +35,7 @@ class SimilarityRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=MAX_LIMIT)
     source_type: str | None = Field(default=None, min_length=1)
     min_score: float | None = Field(default=None, ge=-1, le=1)
+    cursor: str | None = Field(default=None, max_length=512)
 
 
 class HyperedgeRequest(BaseModel):
@@ -153,12 +154,26 @@ async def similar_search(payload: SimilarityRequest):
         )
     if not payload.query.strip():
         raise HTTPException(status_code=422, detail="query must not be blank")
-    hits = await similar(
-        get_session_factory(),
-        embedder,
-        payload.query,
-        limit=payload.limit,
-        source_type=payload.source_type,
-        min_score=payload.min_score,
-    )
-    return {"embedding_model": embedder.model_id, "hits": [hit.as_api() for hit in hits]}
+    settings = get_settings()
+    try:
+        page = await similar_page(
+            get_session_factory(),
+            embedder,
+            payload.query,
+            limit=payload.limit,
+            source_type=payload.source_type,
+            min_score=payload.min_score,
+            cursor=payload.cursor,
+            options=HnswQueryOptions(
+                ef_search=settings.hnsw_ef_search,
+                iterative_scan=settings.hnsw_iterative_scan,
+                max_scan_tuples=settings.hnsw_max_scan_tuples,
+            ),
+        )
+    except InvalidCursor as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "embedding_model": embedder.model_id,
+        "hits": [hit.as_api() for hit in page.hits],
+        "next_cursor": page.next_cursor,
+    }

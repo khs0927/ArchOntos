@@ -233,3 +233,62 @@ async def test_http_search_and_identity(postgres_apps):
             .all()
         )
     assert actors == ["alice", "api-key"]
+
+
+async def test_http_search_pagination_and_cursor_errors(postgres_apps):
+    session_factory = postgres_apps
+    await _seed(session_factory)
+    client = AsyncClient(transport=ASGITransport(app=projection_app.app), base_url="http://t")
+    headers = {"x-api-key": "key-a"}
+    first = (
+        await client.post(
+            "/v1/search/similar", json={"query": "건축물", "limit": 2}, headers=headers
+        )
+    ).json()
+    assert len(first["hits"]) == 2 and first["next_cursor"]
+    second = (
+        await client.post(
+            "/v1/search/similar",
+            json={"query": "건축물", "limit": 2, "cursor": first["next_cursor"]},
+            headers=headers,
+        )
+    ).json()
+    assert len(second["hits"]) == 1 and second["next_cursor"] is None
+    ids = [h["source_id"] for h in first["hits"] + second["hits"]]
+    assert sorted(ids) == sorted(TEXTS)
+    bad = await client.post(
+        "/v1/search/similar",
+        json={"query": "다른 질의", "cursor": first["next_cursor"]},
+        headers=headers,
+    )
+    assert bad.status_code == 422
+
+
+async def test_per_actor_jurisdictions_reach_rls(postgres_apps, monkeypatch):
+    """A named key mapped to JP only cannot see KR source documents (migration 013)."""
+    session_factory = postgres_apps
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text(
+                "INSERT INTO source_document(source_key, title, issuer, jurisdiction_code, "
+                "document_type) VALUES ('doc:kr', 't', 'i', 'KR', 'statute')"
+            )
+        )
+    monkeypatch.setenv("ARCHONTOS_ACTOR_JURISDICTIONS", "alice:JP")
+    get_settings.cache_clear()
+    from apps.common import resolve_principal  # noqa: PLC0415 - after env change
+
+    class _Req:
+        headers = {"x-api-key": "key-a"}
+
+    principal = resolve_principal(_Req(), {"key-a": "alice"})  # type: ignore[arg-type]
+    assert principal is not None and principal.jurisdictions == ("JP",)
+    token = set_principal(principal)
+    try:
+        async with session_factory() as session:
+            visible = (
+                await session.execute(text("SELECT count(*) FROM source_document"))
+            ).scalar_one()
+    finally:
+        reset_principal(token)
+    assert visible == 0
