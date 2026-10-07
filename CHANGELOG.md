@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Least-privilege DB role: migration 012 creates the `archontos_app` group (DML only; on
+  `audit_log` only SELECT/INSERT). `python -m archontos.db.roles ensure-login|check` provisions
+  and verifies the service login. Compose (`db-login` service), CI (from the built image) and
+  Helm use it, and services check at startup (`ARCHONTOS_DB_PRIVILEGE_CHECK`, `enforce` in
+  compose/Helm). The whole integration suite now runs as a non-superuser.
+- Jurisdiction RLS (migration 013, from the template) on `source_document`, fail-closed. Every
+  transaction sets `app.actor` and `app.allowed_jurisdictions` (`ContextSession`).
+- Authorization: `ARCHONTOS_ACTOR_ROLES` (viewer/proposer/approver/executor/curator/reviewer/
+  operator/admin) guards every `/v1` route (a test enforces this); four-eyes on approval;
+  `ARCHONTOS_ACTOR_JURISDICTIONS` for per-actor RLS scope.
+- Search: opaque, query-bound cursor pagination (`next_cursor`, depth ≤ 1000); `min_score` is
+  applied in SQL; `ARCHONTOS_HNSW_EF_SEARCH|ITERATIVE_SCAN|MAX_SCAN_TUPLES`;
+  `python -m archontos.db.vector_index` rebuilds HNSW with `m`/`ef_construction` concurrently.
 - Similarity search: `POST /v1/search/similar` (projection service) embeds the query with the
   configured embedder and ranks rows by cosine similarity, only against vectors from the same
   `embedding_model`; optional `source_type` and `min_score`. Migration 010 adds a partial HNSW
