@@ -1,7 +1,7 @@
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from apps.common import create_service
+from apps.common import authorization_enabled, create_service, require
 from archontos.actions.gate import ApprovalDenied
 from archontos.actions.persistence import (
     MemoryActionStore,
@@ -9,6 +9,7 @@ from archontos.actions.persistence import (
     parse_action_id,
 )
 from archontos.actions.service import propose_report
+from archontos.authz import Permission, check_four_eyes
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.domain.enums import QueryIntent
@@ -56,13 +57,13 @@ def _store():
     return _memory
 
 
-@app.post("/v1/query/classify")
+@app.post("/v1/query/classify", dependencies=[require(Permission.QUERY_READ)])
 async def classify_query(payload: QueryRequest):
     intent: QueryIntent = router.classify(payload.query)
     return {"intent": intent}
 
 
-@app.post("/v1/actions/report/propose")
+@app.post("/v1/actions/report/propose", dependencies=[require(Permission.ACTION_PROPOSE)])
 async def report_proposal(payload: ReportProposeRequest):
     proposal = propose_report(payload.target_refs, payload.context)
     stored = await _store().propose(proposal, created_by=current_actor(default="anonymous"))
@@ -93,7 +94,7 @@ async def _decide(op: str, action_id: str, *args: str):
     return stored.as_api()
 
 
-@app.get("/v1/actions/{action_id}")
+@app.get("/v1/actions/{action_id}", dependencies=[require(Permission.ACTION_READ)])
 async def get_action(action_id: str):
     store = _store()
     found = await store.get(_normalize_id(store, action_id))
@@ -102,16 +103,22 @@ async def get_action(action_id: str):
     return found.as_api()
 
 
-@app.post("/v1/actions/{action_id}/approve")
+@app.post("/v1/actions/{action_id}/approve", dependencies=[require(Permission.ACTION_APPROVE)])
 async def approve_action(action_id: str, payload: DecisionRequest):
-    return await _decide("approve", action_id, _effective_actor(payload.actor))
+    actor = _effective_actor(payload.actor)
+    store = _store()
+    found = await store.get(_normalize_id(store, action_id))
+    if found is None:
+        raise HTTPException(status_code=404, detail="action not found")
+    check_four_eyes(current_principal(), found.created_by, enabled=authorization_enabled())
+    return await _decide("approve", action_id, actor)
 
 
-@app.post("/v1/actions/{action_id}/reject")
+@app.post("/v1/actions/{action_id}/reject", dependencies=[require(Permission.ACTION_REJECT)])
 async def reject_action(action_id: str, payload: DecisionRequest):
     return await _decide("reject", action_id, _effective_actor(payload.actor), payload.reason)
 
 
-@app.post("/v1/actions/{action_id}/execute")
+@app.post("/v1/actions/{action_id}/execute", dependencies=[require(Permission.ACTION_EXECUTE)])
 async def execute_action(action_id: str, payload: DecisionRequest):
     return await _decide("execute", action_id, _effective_actor(payload.actor))

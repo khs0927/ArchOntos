@@ -3,7 +3,8 @@ from typing import Annotated
 
 from fastapi import HTTPException, Query
 
-from apps.common import create_service
+from apps.common import create_service, require
+from archontos.authz import Permission
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.ingestion.adapters import LawGoKrAdapter, SourceAdapterError
@@ -34,7 +35,7 @@ def _artifact_store():
     raise RuntimeError(f"unsupported artifact backend: {settings.artifact_backend}")
 
 
-@app.post("/v1/contracts/legal-version/validate")
+@app.post("/v1/contracts/legal-version/validate", dependencies=[require(Permission.QUERY_READ)])
 async def validate_legal_version(payload: NormalizedLegalVersion):
     return {
         "valid": True,
@@ -43,7 +44,7 @@ async def validate_legal_version(payload: NormalizedLegalVersion):
     }
 
 
-@app.get("/v1/sources/lawgo/search")
+@app.get("/v1/sources/lawgo/search", dependencies=[require(Permission.QUERY_READ)])
 async def search_lawgo(
     query: Annotated[str, Query(min_length=1)],
     page: Annotated[int, Query(ge=1)] = 1,
@@ -63,7 +64,7 @@ async def search_lawgo(
     }
 
 
-@app.get("/v1/sources/lawgo/effective-versions")
+@app.get("/v1/sources/lawgo/effective-versions", dependencies=[require(Permission.QUERY_READ)])
 async def search_lawgo_effective_versions(
     query: Annotated[str, Query(min_length=1)],
     page: Annotated[int, Query(ge=1)] = 1,
@@ -87,7 +88,7 @@ async def search_lawgo_effective_versions(
     }
 
 
-@app.post("/v1/sources/lawgo/ingest-current")
+@app.post("/v1/sources/lawgo/ingest-current", dependencies=[require(Permission.SOURCE_INGEST)])
 async def ingest_lawgo_current(query: Annotated[str, Query(min_length=1)]):
     service = LawIngestionService(
         adapter=_lawgo(),

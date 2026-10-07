@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
-from apps.common import create_service
+from apps.common import create_service, require
 from archontos.assertions.contracts import (
     AssertionCandidateCreate,
     AssertionCandidateView,
@@ -15,6 +15,7 @@ from archontos.assertions.persistence import (
 )
 from archontos.assertions.review import AssertionReviewError, promotable_to_rule
 from archontos.assertions.service import AssertionWorkflowService
+from archontos.authz import Permission
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.domain.contracts import AssertionContract, EvidenceSpanContract
@@ -44,7 +45,7 @@ def _artifact_store():
     raise RuntimeError(f"unsupported artifact backend: {settings.artifact_backend}")
 
 
-@app.post("/v1/contracts/assertion/validate")
+@app.post("/v1/contracts/assertion/validate", dependencies=[require(Permission.QUERY_READ)])
 async def validate_assertion(evidence: EvidenceSpanContract, assertion: AssertionContract):
     return {
         "valid": True,
@@ -54,7 +55,7 @@ async def validate_assertion(evidence: EvidenceSpanContract, assertion: Assertio
     }
 
 
-@app.post("/v1/normalization/process-one")
+@app.post("/v1/normalization/process-one", dependencies=[require(Permission.SOURCE_INGEST)])
 async def process_normalization_outbox():
     result = await NormalizationOutboxWorker(
         session_factory=get_session_factory(),
@@ -75,7 +76,11 @@ async def process_normalization_outbox():
     }
 
 
-@app.post("/v1/assertions/candidates", response_model=AssertionCandidateView)
+@app.post(
+    "/v1/assertions/candidates",
+    dependencies=[require(Permission.ASSERTION_PROPOSE)],
+    response_model=AssertionCandidateView,
+)
 async def create_assertion_candidate(payload: AssertionCandidateCreate):
     try:
         result = await _workflow().create_candidate(payload)
@@ -91,7 +96,11 @@ async def create_assertion_candidate(payload: AssertionCandidateCreate):
     )
 
 
-@app.post("/v1/assertions/{assertion_id}/review", response_model=AssertionReviewView)
+@app.post(
+    "/v1/assertions/{assertion_id}/review",
+    dependencies=[require(Permission.ASSERTION_REVIEW)],
+    response_model=AssertionReviewView,
+)
 async def review_assertion(assertion_id: UUID, payload: AssertionReviewRequest):
     decision = ReviewStatus(payload.decision)
     try:

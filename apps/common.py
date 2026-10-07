@@ -1,11 +1,18 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
+from archontos.authz import (
+    AuthorizationError,
+    Permission,
+    authorize,
+    parse_actor_jurisdictions,
+    parse_actor_roles,
+)
 from archontos.config import get_settings
 from archontos.db.roles import verify_service_login
 from archontos.identity import (
@@ -13,6 +20,7 @@ from archontos.identity import (
     UNNAMED_KEY_ACTOR,
     InvalidActor,
     Principal,
+    current_principal,
     match_key,
     parse_api_keys,
     reset_principal,
@@ -39,13 +47,38 @@ def resolve_principal(request: Request, keys: dict[str, str]) -> Principal | Non
     """Return the request principal, or None when authentication is required and fails."""
     if keys:
         actor = match_key(request.headers.get("x-api-key", ""), keys)
-        return None if actor is None else Principal(actor=actor, authenticated=True)
+        if actor is None:
+            return None
+        settings = get_settings()
+        roles = parse_actor_roles(settings.actor_roles).get(actor, frozenset())
+        jurisdictions = parse_actor_jurisdictions(settings.actor_jurisdictions).get(actor)
+        return Principal(actor=actor, authenticated=True, roles=roles, jurisdictions=jurisdictions)
     hint = request.headers.get("x-actor", "")
     try:
         actor = validate_actor(hint) if hint else ANONYMOUS
     except InvalidActor:
         actor = ANONYMOUS
     return Principal(actor=actor, authenticated=False)
+
+
+def authorization_enabled() -> bool:
+    return bool(get_settings().actor_roles.strip())
+
+
+def require(permission: Permission):
+    """FastAPI dependency: the request principal must hold ``permission`` (when enabled)."""
+
+    async def _check() -> Principal | None:
+        principal = current_principal()
+        authorize(principal, permission, enabled=authorization_enabled())
+        return principal
+
+    return Depends(_check)
+
+
+async def _authorization_error(_request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, AuthorizationError)  # noqa: S101 - registered for this type only
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 def route_label(request: Request) -> str:
@@ -75,6 +108,7 @@ def create_service(name: str) -> FastAPI:
     app = FastAPI(title=f"ArchOntos {name}", version="0.1.0", lifespan=_lifespan)
     app.add_exception_handler(RuleEvaluationError, _unprocessable)
     app.add_exception_handler(CanonicalizationError, _unprocessable)
+    app.add_exception_handler(AuthorizationError, _authorization_error)
 
     @app.middleware("http")
     async def _observe(request: Request, call_next):

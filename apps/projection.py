@@ -4,7 +4,8 @@ from fastapi import HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
-from apps.common import create_service
+from apps.common import create_service, require
+from archontos.authz import Permission
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.graph.hyperedges import (
@@ -69,7 +70,7 @@ def _hyperedge_store():
     return _hyperedges
 
 
-@app.get("/v1/status")
+@app.get("/v1/status", dependencies=[require(Permission.QUERY_READ)])
 async def projection_status():
     body = {
         "canonical_source": "postgresql",
@@ -87,7 +88,7 @@ async def projection_status():
         return {**body, "checkpoint_error": "database unavailable"}
 
 
-@app.post("/v1/projections/drain")
+@app.post("/v1/projections/drain", dependencies=[require(Permission.PROJECTION_ADMIN)])
 async def drain_projection(limit: int = Query(default=100, ge=1, le=1000)):
     _require_postgres("projection drain")
     result = await _worker().process_batch(limit=limit)
@@ -98,7 +99,7 @@ async def drain_projection(limit: int = Query(default=100, ge=1, le=1000)):
     }
 
 
-@app.post("/v1/projections/rebuild")
+@app.post("/v1/projections/rebuild", dependencies=[require(Permission.PROJECTION_ADMIN)])
 async def rebuild_projection(limit: int = Query(default=500, ge=1, le=5000)):
     _require_postgres("projection rebuild")
     result = await _worker().rebuild(limit=limit)
@@ -110,7 +111,7 @@ async def rebuild_projection(limit: int = Query(default=500, ge=1, le=5000)):
     }
 
 
-@app.post("/v1/hyperedges")
+@app.post("/v1/hyperedges", dependencies=[require(Permission.HYPEREDGE_WRITE)])
 async def create_hyperedge(payload: HyperedgeRequest):
     members = [
         HyperedgeMember(
@@ -122,7 +123,7 @@ async def create_hyperedge(payload: HyperedgeRequest):
     return created.as_api()
 
 
-@app.get("/v1/hyperedges/{hyperedge_id}")
+@app.get("/v1/hyperedges/{hyperedge_id}", dependencies=[require(Permission.ACTION_READ)])
 async def get_hyperedge(hyperedge_id: str):
     store = _hyperedge_store()
     if isinstance(store, PostgresHyperedgeStore) and not _is_uuid(hyperedge_id):
@@ -141,7 +142,7 @@ def _is_uuid(value: str) -> bool:
     return True
 
 
-@app.post("/v1/search/similar")
+@app.post("/v1/search/similar", dependencies=[require(Permission.SEARCH_QUERY)])
 async def similar_search(payload: SimilarityRequest):
     _require_postgres("similarity search")
     embedder = _embedder()

@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     lawgo_base_url: str = "https://www.law.go.kr/DRF"
     # Empty means open, matching local MVP-0. Set a comma-separated list to require X-API-Key.
     api_keys: str = ""
+    # Empty disables authorization. Otherwise actor:role+role,... (see archontos.authz).
+    actor_roles: str = ""
+    # Optional per-actor jurisdictions for row-level security: actor:KR+JP,...
+    actor_jurisdictions: str = ""
     # memory keeps the smoke path DB-free. postgres is the canonical action/projection backend.
     action_backend: Literal["memory", "postgres"] = "memory"
     # none keeps embedding NULL; hashing is deterministic; fastembed needs the [embeddings] extra.
