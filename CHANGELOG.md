@@ -1,3 +1,5 @@
+# Changelog
+
 ## Unreleased
 
 - Persist report proposals and enforce the approval gate before `action_run`.
