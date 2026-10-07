@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Embeddings: `ARCHONTOS_EMBEDDER=none|hashing|fastembed`. fastembed (Apache-2.0, ONNX, no
+  torch) is an optional extra `archontos[embeddings]`; default model is multilingual
+  (`paraphrase-multilingual-MiniLM-L12-v2`). Vectors are L2-normalised and zero-padded to
+  `vector(1536)`; migration 009 adds `embedding_model` (NULL iff `embedding` is NULL).
+- `AecSubjectRef.schema` is now `schema_id` (alias `schema`); the JSON contract is unchanged and
+  the pydantic shadowing warning is gone. pydantic lower bound raised to 2.11.
+- mypy (`check_untyped_defs`) is clean and runs in CI; fixed 8 typing errors.
+- Helm: per-service HorizontalPodAutoscaler, resource requests/limits, NetworkPolicy
+  `extraEgress` for PostgreSQL/object storage/law.go.kr.
+- CI: `ruff format --check`, mypy, image import check, fastembed job, helm lint/render job.
 - Persist report proposals and enforce the approval gate before `action_run`.
 - Drain `domain_event` into `embedding_projection` with a rebuildable checkpoint.
 - Increment `archontos_http_requests_total`. Optional `ARCHONTOS_API_KEYS`.

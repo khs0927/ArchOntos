@@ -52,7 +52,8 @@ Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; def
 
 Still incomplete:
 
-- Helm has a ServiceAccount and default-deny NetworkPolicy, not GitOps reconciliation or an HPA
+- Helm has a ServiceAccount, NetworkPolicy (set `networkPolicy.extraEgress` for the database)
+  and optional per-service HPA (`autoscaling.enabled`); no GitOps reconciliation yet
 - identity propagation beyond a shared API key (RLS, per-user actor) is still P3
 
 ## Architecture
