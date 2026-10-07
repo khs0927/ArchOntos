@@ -14,6 +14,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import asyncpg
@@ -23,6 +24,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from archontos.db.migrate import apply_migrations
+from archontos.db.roles import ensure_login
+from archontos.db.session import install_session_context
 from archontos.ingestion.adapters import LawGoKrAdapter, LawSearchItem, RawSourceEnvelope
 from archontos.ingestion.persistence import CanonicalLawRepository
 
@@ -66,6 +69,8 @@ async def mvp0_db(
     any expected table is missing.
     """
     schema = f"archontos_test_{uuid4().hex}"
+    app_login = f"archontos_test_app_{uuid4().hex[:16]}"
+    app_password = uuid4().hex
     admin = await asyncpg.connect(postgres_dsn)
     engine = None
     try:
@@ -76,11 +81,17 @@ async def mvp0_db(
 
         await _assert_schema_is_populated(admin, schema)
 
+        # The application side connects as a throwaway NON-superuser login in the
+        # archontos_app group (migration 012), exactly like compose/Helm. Every integration
+        # test therefore runs with row-level security in force; the admin connection above
+        # (superuser, migrator) is only used for setup and teardown.
+        await ensure_login(admin, app_login, app_password)
         engine = create_async_engine(
-            sqlalchemy_url(postgres_dsn),
+            sqlalchemy_url(_with_credentials(postgres_dsn, app_login, app_password)),
             connect_args={"server_settings": {"search_path": f"{schema},public"}},
         )
         session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        session_factory = install_session_context(session_factory)
         yield session_factory, schema
     finally:
         if engine is not None:
@@ -88,8 +99,16 @@ async def mvp0_db(
         try:
             await admin.execute("SET search_path TO public")
             await admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            await admin.execute(f'DROP ROLE IF EXISTS "{app_login}"')
         finally:
             await admin.close()
+
+
+def _with_credentials(dsn: str, user: str, password: str) -> str:
+    parts = urlsplit(dsn)
+    host = parts.hostname or "localhost"
+    netloc = f"{user}:{password}@{host}" + (f":{parts.port}" if parts.port else "")
+    return urlunsplit(parts._replace(netloc=netloc))
 
 
 EXPECTED_TABLES = (

@@ -1,3 +1,5 @@
+-- APPLIED: the source_document policy below now ships as db/migrations/013_jurisdiction_rls.sql
+-- (FOR ALL, fail-closed). Keep this file as the pattern for further tables.
 -- Production RLS template. Apply only after the application gateway sets session attributes.
 -- Example per request:
 --   SET LOCAL app.allowed_jurisdictions = 'KR,KR-11';

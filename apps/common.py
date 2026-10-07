@@ -1,9 +1,13 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
 from archontos.config import get_settings
+from archontos.db.roles import verify_service_login
 from archontos.identity import (
     ANONYMOUS,
     UNNAMED_KEY_ACTOR,
@@ -60,8 +64,15 @@ async def _unprocessable(_request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    await verify_service_login(settings.database_url, settings.db_privilege_check)
+    yield
+
+
 def create_service(name: str) -> FastAPI:
-    app = FastAPI(title=f"ArchOntos {name}", version="0.1.0")
+    app = FastAPI(title=f"ArchOntos {name}", version="0.1.0", lifespan=_lifespan)
     app.add_exception_handler(RuleEvaluationError, _unprocessable)
     app.add_exception_handler(CanonicalizationError, _unprocessable)
 

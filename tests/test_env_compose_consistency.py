@@ -83,6 +83,21 @@ def test_migrations_run_through_the_runner_not_initdb():
     assert not any("docker-entrypoint-initdb.d" in v for v in volumes)
     assert services["migrate"]["command"] == ["python", "-m", "archontos.db.migrate"]
     for name, service in services.items():
-        if service.get("build") and name != "migrate":
+        if service.get("build") and name not in {"migrate", "db-login"}:
             condition = service["depends_on"]["migrate"]["condition"]
             assert condition == "service_completed_successfully", name
+
+
+def test_services_use_the_unprivileged_login():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    assert services["db-login"]["depends_on"]["migrate"]["condition"] == (
+        "service_completed_successfully"
+    )
+    for name, service in services.items():
+        if not service.get("build") or name in {"migrate", "db-login"}:
+            continue
+        env = service["environment"]
+        assert "archontos_svc:" in env["ARCHONTOS_DATABASE_URL"], name
+        assert env["ARCHONTOS_DB_PRIVILEGE_CHECK"] == "enforce", name
+        assert service["depends_on"]["db-login"]["condition"] == "service_completed_successfully"

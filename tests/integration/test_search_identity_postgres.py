@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from uuid import uuid4
 
+import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 import apps.action as action_app
 import apps.projection as projection_app
@@ -119,40 +121,52 @@ async def test_actor_is_recorded_on_action_and_audit(mvp0_db):
     assert actors == ["alice", "bob"]
 
 
-async def test_audit_log_is_append_only_for_application_roles(mvp0_db):
-    session_factory, schema = mvp0_db
-    role = f"archontos_app_{uuid4().hex[:12]}"
+async def test_app_role_cannot_rewrite_audit_log(mvp0_db):
+    """The service login (non-superuser, archontos_app) can append but has no UPDATE/DELETE."""
+    session_factory, _ = mvp0_db
     async with session_factory() as session, session.begin():
-        await session.execute(text(f'CREATE ROLE "{role}" NOLOGIN'))
-        await session.execute(text(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"'))
         await session.execute(
-            text(f'GRANT SELECT, INSERT, UPDATE, DELETE ON audit_log TO "{role}"')
-        )
-        await session.execute(
-            text(f'GRANT USAGE ON ALL SEQUENCES IN SCHEMA "{schema}" TO "{role}"')
-        )
-    try:
-        async with session_factory() as session, session.begin():
-            await session.execute(text(f'SET LOCAL ROLE "{role}"'))
-            await session.execute(text("SELECT set_config('app.actor', 'carol', true)"))
-            await session.execute(
-                text(
-                    "INSERT INTO audit_log(action, target_table, target_id) "
-                    "VALUES ('probe', 'action', 'x')"
-                )
+            text(
+                "INSERT INTO audit_log(action, target_table, target_id) "
+                "VALUES ('probe', 'action', 'x')"
             )
-            actor = (
-                await session.execute(text("SELECT actor FROM audit_log WHERE action = 'probe'"))
-            ).scalar_one()
-            assert actor == "carol"
-            updated = await session.execute(text("UPDATE audit_log SET actor = 'mallory'"))
-            deleted = await session.execute(text("DELETE FROM audit_log"))
-            assert updated.rowcount == 0
-            assert deleted.rowcount == 0
+        )
+    for statement in ("UPDATE audit_log SET actor = 'mallory'", "DELETE FROM audit_log"):
+        with pytest.raises(DBAPIError, match="permission denied"):
+            async with session_factory() as session, session.begin():
+                await session.execute(text(statement))
+
+
+async def test_audit_log_rls_blocks_rewrites_even_with_table_privileges(mvp0_db, postgres_dsn):
+    """Forced RLS (migration 011) holds even for a role that was granted UPDATE/DELETE."""
+    _, schema = mvp0_db
+    role = f"archontos_rls_{uuid4().hex[:12]}"
+    admin = await asyncpg.connect(postgres_dsn)
+    try:
+        await admin.execute(f'CREATE ROLE "{role}" NOLOGIN')
+        await admin.execute(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"')
+        await admin.execute(
+            f'GRANT SELECT, INSERT, UPDATE, DELETE ON "{schema}".audit_log TO "{role}"'
+        )
+        await admin.execute(f'GRANT USAGE ON ALL SEQUENCES IN SCHEMA "{schema}" TO "{role}"')
+        async with admin.transaction():
+            await admin.execute(f'SET LOCAL search_path TO "{schema}", public')
+            await admin.execute(f'SET LOCAL ROLE "{role}"')
+            await admin.execute("SELECT set_config('app.actor', 'carol', true)")
+            await admin.execute(
+                "INSERT INTO audit_log(action, target_table, target_id) "
+                "VALUES ('probe', 'action', 'x')"
+            )
+            assert (
+                await admin.fetchval("SELECT actor FROM audit_log WHERE action = 'probe'")
+                == "carol"
+            )
+            assert await admin.execute("UPDATE audit_log SET actor = 'mallory'") == "UPDATE 0"
+            assert await admin.execute("DELETE FROM audit_log") == "DELETE 0"
     finally:
-        async with session_factory() as session, session.begin():
-            await session.execute(text(f'DROP OWNED BY "{role}"'))
-            await session.execute(text(f'DROP ROLE "{role}"'))
+        await admin.execute(f'DROP OWNED BY "{role}"')
+        await admin.execute(f'DROP ROLE "{role}"')
+        await admin.close()
 
 
 @pytest.fixture

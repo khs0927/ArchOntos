@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     action_backend: Literal["memory", "postgres"] = "memory"
     # none keeps embedding NULL; hashing is deterministic; fastembed needs the [embeddings] extra.
     embedder: Literal["none", "hashing", "fastembed"] = "none"
+    # Startup check that the service DB login cannot bypass row-level security.
+    # off: skip | warn: log (default) | enforce: refuse to start (production, Helm default).
+    db_privilege_check: Literal["off", "warn", "enforce"] = "warn"
     embedding_model: str | None = None
     embedding_cache_dir: str | None = None
 

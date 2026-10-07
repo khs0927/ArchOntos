@@ -28,6 +28,9 @@ _ACTOR_RE = re.compile(r"^[A-Za-z0-9._@-]{1,128}$")
 class Principal:
     actor: str
     authenticated: bool
+    roles: frozenset[str] = frozenset()
+    # None means "the deployment default" (ARCHONTOS_ALLOWED_JURISDICTIONS).
+    jurisdictions: tuple[str, ...] | None = None
 
 
 _current: ContextVar[Principal | None] = ContextVar("archontos_principal", default=None)
@@ -91,3 +94,18 @@ async def bind_actor(session: AsyncSession, actor: str | None = None) -> None:
         text("SELECT set_config('app.actor', :actor, true)"),
         {"actor": actor or current_actor()},
     )
+
+
+def default_jurisdictions() -> tuple[str, ...]:
+    from archontos.config import get_settings
+
+    raw = get_settings().allowed_jurisdictions
+    return tuple(code.strip() for code in raw.split(",") if code.strip())
+
+
+def current_jurisdictions() -> tuple[str, ...]:
+    """Jurisdictions the current request may read/write (row-level security input)."""
+    principal = _current.get()
+    if principal is not None and principal.jurisdictions is not None:
+        return principal.jurisdictions
+    return default_jurisdictions()

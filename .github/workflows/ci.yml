@@ -54,6 +54,12 @@ jobs:
           docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn"
           docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn" | grep "applied 0"
           docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn" --status
+          # Least-privilege service login: provisioned by the migrator, verified as itself.
+          docker run --rm --network host -e ARCHONTOS_APP_DB_PASSWORD=ci-svc archontos:ci \
+            python -m archontos.db.roles ensure-login --name archontos_svc --dsn "$dsn"
+          svc=postgresql://archontos_svc:ci-svc@localhost:5432/archontos
+          docker run --rm --network host archontos:ci python -m archontos.db.roles check --dsn "$svc"
+          ! docker run --rm --network host archontos:ci python -m archontos.db.roles check --dsn "$dsn"
           # The image must start each service module (import-time errors surface here).
           for m in ingestion normalization rule_engine projection action; do
             docker run --rm archontos:ci python -c "import apps.$m"
