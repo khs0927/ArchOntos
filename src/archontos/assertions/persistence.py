@@ -118,7 +118,7 @@ class CanonicalAssertionRepository:
         row = inserted.first()
         created = row is not None
 
-        if created:
+        if row is not None:
             assertion_id: UUID = row[0]
             await self._emit_event(
                 assertion_id=assertion_id,

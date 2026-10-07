@@ -130,8 +130,7 @@ class CanonicalRuleCompilerRepository:
             },
         )
         rule_row = inserted_rule.first()
-        rule_created = rule_row is not None
-        if rule_created:
+        if rule_row is not None:
             rule_id: UUID = rule_row[0]
         else:
             existing_rule = await self.session.execute(
@@ -184,7 +183,7 @@ class CanonicalRuleCompilerRepository:
         )
         version_row = inserted_version.first()
         version_created = version_row is not None
-        if version_created:
+        if version_row is not None:
             rule_version_id: UUID = version_row[0]
             status = version_row[1]
         else:

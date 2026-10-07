@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,7 +17,7 @@ class EvidenceDiff:
     indeterminate: tuple[str, ...]
 
     @property
-    def completeness(self) -> str:
+    def completeness(self) -> Literal["complete", "partial"]:
         return "complete" if not self.indeterminate else "partial"
 
 
