@@ -38,27 +38,19 @@ Complete and exercised against a real PostgreSQL instance:
 - canonical source-evidence, authority, applicability, temporal and jurisdiction query APIs
 - unit and integration tests, including a real-PostgreSQL golden path
 
-Present but not yet doing the work the name implies:
+Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; default `memory` keeps smoke tests DB-free):
 
-- role-based hyperedges (`schema only`; no Python references any hyperedge table)
-- service boundaries for ingestion, normalization, rule engine, projection and
-  action (`shell`: `apps/projection.py` returns a hardcoded status literal and
-  `apps/action.py` returns a hardcoded proposal)
-- Prometheus-ready metrics endpoint (`partial`: `/metrics` is served, but
-  `REQUEST_COUNT` is declared and never incremented)
-- PostgreSQL 18 + pgvector development stack
-- Helm/GitOps deployment skeleton (`skeleton`: no ServiceAccount, NetworkPolicy
-  or HPA; no GitOps reconciliation)
+- role-based hyperedges (`src/archontos/graph/hyperedges.py`, `POST /v1/hyperedges`)
+- action / action_run persistence and the approval gate (`POST /v1/actions/{id}/approve|reject|execute`). A report cannot run from `proposed` while `requires_approval` is true
+- projection worker (`src/archontos/projection/worker.py`) replays `domain_event` into `embedding_projection` and advances `projection_checkpoint` (`POST /v1/projections/drain`, `/rebuild`)
+- `REQUEST_COUNT` is incremented per request
+- optional API key gate: set `ARCHONTOS_API_KEYS`; `/health` and `/metrics` stay open
 
-Known gaps that are not implemented at all:
+Still incomplete:
 
-- projection workers and `projection_checkpoint`; the outbox has no drainer
-  outside normalization, and `src/archontos/projection/base.py` still raises
-  `NotImplementedError`
-- `action` / `action_run` persistence and the approval gate. `requires_approval`
-  is returned by `POST /v1/actions/report/propose` but never stored or enforced
-- API authentication and identity propagation. Every endpoint is currently open
-  (tracked as P3 in `docs/ROADMAP.md`)
+- embedding vectors are not computed (`embedding` stays null until an embedder is configured)
+- Helm has a ServiceAccount and default-deny NetworkPolicy, not GitOps reconciliation or an HPA
+- identity propagation beyond a shared API key (RLS, per-user actor) is still P3
 
 ## Architecture
 
@@ -105,8 +97,7 @@ docker compose up -d postgres
 # docker compose --profile s3 up -d minio   # and ARCHONTOS_ARTIFACT_BACKEND=minio
 ```
 
-All published ports (Postgres, MinIO, apps 8001-8005) bind to `127.0.0.1`; the APIs have no
-authentication yet, so put an authenticating reverse proxy in front before exposing them.
+All published ports (Postgres, MinIO, apps 8001-8005) bind to `127.0.0.1`. Set `ARCHONTOS_API_KEYS` before exposing them; `/health` and `/metrics` stay open.
 
 Run the ingestion API:
 
