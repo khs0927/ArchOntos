@@ -12,6 +12,7 @@ from archontos.graph.hyperedges import (
     MemoryHyperedgeStore,
     PostgresHyperedgeStore,
 )
+from archontos.projection.embedder import Embedder, build_embedder
 from archontos.projection.worker import ProjectionWorker
 
 app = create_service("projection")
@@ -33,8 +34,20 @@ class HyperedgeRequest(BaseModel):
     properties: dict = Field(default_factory=dict)
 
 
+_embedder_cache: dict[tuple[str, str | None, str | None], Embedder | None] = {}
+
+
+def _embedder() -> Embedder | None:
+    settings = get_settings()
+    key = (settings.embedder, settings.embedding_model, settings.embedding_cache_dir)
+    if key not in _embedder_cache:
+        # Model load is expensive; build once per configuration.
+        _embedder_cache[key] = build_embedder(*key)
+    return _embedder_cache[key]
+
+
 def _worker() -> ProjectionWorker:
-    return ProjectionWorker(get_session_factory())
+    return ProjectionWorker(get_session_factory(), embedder=_embedder())
 
 
 def _require_postgres(what: str) -> None:

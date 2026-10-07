@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 from archontos.domain.enums import AuthorityClass, DecisionOutcome, ReviewStatus
 
@@ -40,7 +40,15 @@ class EvidenceSpanContract(BaseModel):
 class AecSubjectRef(BaseModel):
     """Stable reference from a legal assertion to an Ontology AEC subject."""
 
-    schema: Literal["archontos-aec-subject-ref/1"] = "archontos-aec-subject-ref/1"
+    # The wire name is ``schema``; the attribute is ``schema_id`` so it does not shadow
+    # ``BaseModel.schema``. Serialization keeps the ``schema`` key (contract unchanged).
+    model_config = ConfigDict(
+        serialize_by_alias=True, validate_by_name=True, validate_by_alias=True
+    )
+
+    schema_id: Literal["archontos-aec-subject-ref/1"] = Field(
+        default="archontos-aec-subject-ref/1", alias="schema"
+    )
     project_id: str = Field(min_length=1)
     object_id: str | None = Field(default=None, min_length=1)
     source_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")

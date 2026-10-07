@@ -173,7 +173,7 @@ class LawEvidenceNormalizer:
                 "pdf_url": _official_url(attachment.get("별표서식PDF파일링크")),
                 "image_url": _official_url(attachment.get("별표서식이미지파일링크")),
             }
-            text = _string(attachment.get("별표내용")) or locator["attachment_title"]
+            text = _string(attachment.get("별표내용")) or _string(locator["attachment_title"])
             units.append(self._unit(locator, text))
 
         return tuple(units)

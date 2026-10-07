@@ -152,7 +152,7 @@ def merge_context(facts: dict[str, Any], context: dict[str, Any] | None) -> tupl
                 )
                 blocked = True
                 break
-            if part not in target:
+            if not isinstance(nxt, dict):
                 nxt = target[part] = {}
             target = nxt
         if not blocked:
@@ -163,7 +163,7 @@ def merge_context(facts: dict[str, Any], context: dict[str, Any] | None) -> tupl
             conflicts.append(
                 {"fact": "fact_units", "drawings": existing_units, "operator": unit_context}
             )
-        else:
+        elif isinstance(unit_context, dict):
             for path, unit in unit_context.items():
                 if not isinstance(path, str) or any(not p for p in path.split(".")):
                     raise OntologyFactsError("unit declarations require non-empty fact paths")

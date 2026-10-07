@@ -431,7 +431,7 @@ class CanonicalLawRepository:
                 "payload_json": json.dumps(event_payload),
             },
         )
-        event_id = event_result.scalar_one()
+        event_id: UUID = event_result.scalar_one()
         await self.session.execute(
             text(
                 """

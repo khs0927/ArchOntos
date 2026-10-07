@@ -118,7 +118,7 @@ class CanonicalAssertionRepository:
         row = inserted.first()
         created = row is not None
 
-        if created:
+        if row is not None:
             assertion_id: UUID = row[0]
             await self._emit_event(
                 assertion_id=assertion_id,
@@ -322,7 +322,7 @@ class CanonicalAssertionRepository:
                 "payload_json": json.dumps(payload, ensure_ascii=False, sort_keys=True),
             },
         )
-        event_id = event_result.scalar_one()
+        event_id: UUID = event_result.scalar_one()
         await self.session.execute(
             text(
                 """

@@ -13,7 +13,7 @@ authors = [{name = "ArchOntos"}]
 dependencies = [
   "fastapi>=0.115,<1",
   "uvicorn[standard]>=0.34,<1",
-  "pydantic>=2.10,<3",
+  "pydantic>=2.11,<3",
   "pydantic-settings>=2.7,<3",
   "sqlalchemy[asyncio]>=2.0.36,<3",
   "asyncpg>=0.30,<1",
@@ -26,10 +26,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+embeddings = [
+  "fastembed>=0.8,<0.9",  # Apache-2.0, ONNX Runtime (no torch)
+]
 dev = [
   "pytest>=9.0.3,<10",  # PYSEC-2026-1845 (pip-audit, Phase 5)
   "pytest-asyncio>=1.3,<2",  # 1.3+ supports pytest 9
   "ruff>=0.9,<1",
+  "mypy==1.20.2",  # pinned: mypy inference differs between releases
 ]
 
 [tool.setuptools.packages.find]
@@ -57,3 +61,16 @@ known-first-party = ["archontos"]
 # query from a module constant.
 "tests/**" = ["S101", "S105", "S106", "S107", "S603", "S608"]
 "docs/**" = ["S101", "S603"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "apps"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# Third-party packages without type information.
+module = ["minio.*", "fastembed.*", "asyncpg.*", "pgvector.*"]
+ignore_missing_imports = true
