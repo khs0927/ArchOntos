@@ -136,3 +136,35 @@ def test_unknown_backend_is_rejected(monkeypatch):
     get_settings.cache_clear()
     with pytest.raises(ValueError):
         get_settings()
+
+
+def test_identity_from_named_key_and_header(monkeypatch):
+    monkeypatch.setenv("ARCHONTOS_API_KEYS", "alice:ka")
+    get_settings.cache_clear()
+    client = TestClient(action_app.app)
+    body = {"target_refs": ["rule:1"], "context": {}}
+    created = client.post("/v1/actions/report/propose", json=body, headers={"x-api-key": "ka"})
+    assert created.json()["created_by"] == "alice"
+    assert created.headers["x-archontos-actor"] == "alice"
+    spoof = client.post(
+        f"/v1/actions/{created.json()['id']}/approve",
+        json={"actor": "bob"},
+        headers={"x-api-key": "ka"},
+    )
+    assert spoof.status_code == 403
+
+
+def test_open_mode_uses_actor_header_or_anonymous():
+    client = TestClient(action_app.app)
+    body = {"target_refs": ["rule:1"], "context": {}}
+    hinted = client.post("/v1/actions/report/propose", json=body, headers={"x-actor": "dev"})
+    assert hinted.json()["created_by"] == "dev"
+    bad = client.post("/v1/actions/report/propose", json=body, headers={"x-actor": "a b"})
+    assert bad.json()["created_by"] == "anonymous"
+    invalid = client.post(f"/v1/actions/{hinted.json()['id']}/approve", json={"actor": "no spaces"})
+    assert invalid.status_code == 422
+
+
+def test_similarity_search_needs_postgres_backend():
+    client = TestClient(projection_app.app)
+    assert client.post("/v1/search/similar", json={"query": "x"}).status_code == 409

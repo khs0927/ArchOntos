@@ -1,11 +1,20 @@
-import hmac
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
 from archontos.config import get_settings
+from archontos.identity import (
+    ANONYMOUS,
+    UNNAMED_KEY_ACTOR,
+    InvalidActor,
+    Principal,
+    match_key,
+    parse_api_keys,
+    reset_principal,
+    set_principal,
+    validate_actor,
+)
 from archontos.ingestion.persistence import CanonicalizationError
 from archontos.observability import REQUEST_COUNT
 from archontos.rules.engine import RuleEvaluationError
@@ -13,17 +22,26 @@ from archontos.rules.engine import RuleEvaluationError
 OPEN_PATHS = {"/health", "/metrics"}
 
 
-def api_keys() -> list[str]:
-    return [item.strip() for item in get_settings().api_keys.split(",") if item.strip()]
+def api_keys() -> dict[str, str]:
+    return parse_api_keys(get_settings().api_keys)
 
 
-def key_matches(presented: str, keys: list[str]) -> bool:
-    """Compare in constant time against every configured key (no early exit)."""
-    encoded = presented.encode()
-    matched = False
-    for key in keys:
-        matched |= hmac.compare_digest(encoded, key.encode())
-    return matched
+def key_matches(presented: str, keys: list[str] | dict[str, str]) -> bool:
+    mapping = keys if isinstance(keys, dict) else dict.fromkeys(keys, UNNAMED_KEY_ACTOR)
+    return match_key(presented, mapping) is not None
+
+
+def resolve_principal(request: Request, keys: dict[str, str]) -> Principal | None:
+    """Return the request principal, or None when authentication is required and fails."""
+    if keys:
+        actor = match_key(request.headers.get("x-api-key", ""), keys)
+        return None if actor is None else Principal(actor=actor, authenticated=True)
+    hint = request.headers.get("x-actor", "")
+    try:
+        actor = validate_actor(hint) if hint else ANONYMOUS
+    except InvalidActor:
+        actor = ANONYMOUS
+    return Principal(actor=actor, authenticated=False)
 
 
 def route_label(request: Request) -> str:
@@ -50,15 +68,20 @@ def create_service(name: str) -> FastAPI:
     @app.middleware("http")
     async def _observe(request: Request, call_next):
         keys = api_keys()
-        if keys and request.url.path not in OPEN_PATHS:
-            presented = request.headers.get("x-api-key", "")
-            if not key_matches(presented, keys):
-                REQUEST_COUNT.labels(service=name, route="unauthorized").inc()
-                return JSONResponse(
-                    status_code=401, content={"detail": "missing or invalid api key"}
-                )
-        response = await call_next(request)
+        if request.url.path in OPEN_PATHS:
+            principal: Principal | None = Principal(actor=ANONYMOUS, authenticated=False)
+        else:
+            principal = resolve_principal(request, keys)
+        if principal is None:
+            REQUEST_COUNT.labels(service=name, route="unauthorized").inc()
+            return JSONResponse(status_code=401, content={"detail": "missing or invalid api key"})
+        token = set_principal(principal)
+        try:
+            response = await call_next(request)
+        finally:
+            reset_principal(token)
         REQUEST_COUNT.labels(service=name, route=route_label(request)).inc()
+        response.headers["x-archontos-actor"] = principal.actor
         return response
 
     @app.get("/health", tags=["system"])

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Similarity search: `POST /v1/search/similar` (projection service) embeds the query with the
+  configured embedder and ranks rows by cosine similarity, only against vectors from the same
+  `embedding_model`; optional `source_type` and `min_score`. Migration 010 adds a partial HNSW
+  index (`vector_cosine_ops`); queries enable pgvector iterative scans (`strict_order`).
+- Identity (P3 groundwork): `ARCHONTOS_API_KEYS` accepts `actor:key`; requests run as that actor
+  (echoed in `X-Archontos-Actor`); open mode trusts `X-Actor` as a hint. A named key cannot act as
+  another actor (403). The actor is set per transaction as `app.actor`; migration 011 adds
+  `action.created_by`, defaults `audit_log.actor` from `app.actor`, and makes `audit_log`
+  append-only with forced RLS (SELECT/INSERT policies only).
 - Embeddings: `ARCHONTOS_EMBEDDER=none|hashing|fastembed`. fastembed (Apache-2.0, ONNX, no
   torch) is an optional extra `archontos[embeddings]`; default model is multilingual
   (`paraphrase-multilingual-MiniLM-L12-v2`). Vectors are L2-normalised and zero-padded to
