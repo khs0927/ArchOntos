@@ -37,7 +37,11 @@ jobs:
       - name: Install
         run: pip install -e '.[dev]'
       - name: Lint
-        run: ruff check .
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Type check
+        run: mypy
       - name: Test
         run: pytest
       - name: Compile
@@ -50,3 +54,45 @@ jobs:
           docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn"
           docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn" | grep "applied 0"
           docker run --rm --network host archontos:ci python -m archontos.db.migrate --dsn "$dsn" --status
+          # The image must start each service module (import-time errors surface here).
+          for m in ingestion normalization rule_engine projection action; do
+            docker run --rm archontos:ci python -c "import apps.$m"
+          done
+
+  embeddings:
+    # Optional extra: install fastembed and run the real multilingual model once.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: .fastembed-cache
+          key: fastembed-paraphrase-multilingual-MiniLM-L12-v2
+      - name: Install
+        run: pip install -e '.[dev,embeddings]'
+      - name: Embedder tests (real model)
+        env:
+          ARCHONTOS_TEST_FASTEMBED: '1'
+          ARCHONTOS_EMBEDDING_CACHE_DIR: ${{ github.workspace }}/.fastembed-cache
+        run: pytest tests/test_embedder.py
+
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Lint and render
+        working-directory: deploy/helm/archontos
+        run: |
+          helm lint .
+          helm template t . > /dev/null
+          out=$(helm template t . --set autoscaling.enabled=true \
+            --set services.projection.autoscaling.enabled=false)
+          test "$(grep -c 'kind: HorizontalPodAutoscaler' <<<"$out")" = "4"

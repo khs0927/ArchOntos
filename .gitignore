@@ -13,3 +13,4 @@ build/
 .vscode/
 .DS_Store
 local-data/
+.fastembed-cache/

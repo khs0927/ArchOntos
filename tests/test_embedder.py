@@ -61,7 +61,7 @@ def test_build_embedder():
     reason="set ARCHONTOS_TEST_FASTEMBED=1 to download and run the fastembed model",
 )
 def test_fastembed_multilingual_similarity():
-    embedder = build_embedder("fastembed")
+    embedder = build_embedder("fastembed", cache_dir=os.getenv("ARCHONTOS_EMBEDDING_CACHE_DIR"))
     assert embedder is not None
     base, near, far = embedder.embed(
         ["건축물의 높이 제한", "building height limit", "주차장 설치 기준"]
