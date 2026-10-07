@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 
@@ -7,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from archontos.projection.base import ProjectionEvent
+from archontos.projection.embedder import Embedder, fit_dimension, to_pgvector
 from archontos.projection.embedding import EmbeddingTextProjection
 
 
@@ -26,8 +28,12 @@ class ProjectionWorker:
     """
 
     def __init__(
-        self, session_factory: async_sessionmaker, projection: EmbeddingTextProjection | None = None
+        self,
+        session_factory: async_sessionmaker,
+        projection: EmbeddingTextProjection | None = None,
+        embedder: Embedder | None = None,
     ):
+        self.embedder = embedder
         self.session_factory = session_factory
         self.projection = projection or EmbeddingTextProjection()
 
@@ -82,13 +88,16 @@ class ProjectionWorker:
                             """
                             INSERT INTO embedding_projection(
                                 projection_key, source_type, source_id, content,
-                                canonical_updated_at
+                                embedding, embedding_model, canonical_updated_at
                             )
                             VALUES (
-                                :key, :source_type, :source_id, :content, now()
+                                :key, :source_type, :source_id, :content,
+                                CAST(:embedding AS vector), :embedding_model, now()
                             )
                             ON CONFLICT (projection_key) DO UPDATE
                               SET content = EXCLUDED.content,
+                                  embedding = EXCLUDED.embedding,
+                                  embedding_model = EXCLUDED.embedding_model,
                                   projected_at = now()
                             """
                         ),
@@ -97,6 +106,7 @@ class ProjectionWorker:
                             "source_type": projected.source_type,
                             "source_id": projected.source_id,
                             "content": projected.content,
+                            **(await self._embed(projected.content)),
                         },
                     )
                     last_sequence = event.sequence
@@ -133,6 +143,16 @@ class ProjectionWorker:
             applied=applied,
             last_sequence=last_sequence,
         )
+
+    async def _embed(self, content: str) -> dict[str, str | None]:
+        if self.embedder is None:
+            return {"embedding": None, "embedding_model": None}
+        # Model inference is CPU-bound; keep it off the event loop.
+        vectors = await asyncio.to_thread(self.embedder.embed, [content])
+        return {
+            "embedding": to_pgvector(fit_dimension(vectors[0])),
+            "embedding_model": self.embedder.model_id,
+        }
 
     async def rebuild(self, limit: int = 500) -> ProjectionBatchResult:
         async with self.session_factory() as session:
@@ -181,6 +201,7 @@ class ProjectionWorker:
         return {
             "canonical_source": "postgresql",
             "projections": [self.projection.name, "pgvector"],
+            "embedder": None if self.embedder is None else self.embedder.model_id,
             "rebuildable": True,
             "event_transport": "transactional-outbox",
             "checkpoint": None

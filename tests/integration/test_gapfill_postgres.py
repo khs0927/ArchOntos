@@ -15,6 +15,7 @@ from archontos.actions.gate import ApprovalDenied
 from archontos.actions.persistence import PostgresActionStore
 from archontos.actions.service import propose_report
 from archontos.graph.hyperedges import HyperedgeMember, PostgresHyperedgeStore
+from archontos.projection.embedder import HashingEmbedder
 from archontos.projection.worker import ProjectionWorker
 
 pytestmark = pytest.mark.asyncio
@@ -133,3 +134,35 @@ async def test_hyperedge_round_trip(mvp0_db):
     assert loaded is not None
     assert [m.role for m in loaded.members] == ["rule", "object"]
     assert loaded.properties == {"source": "test"}
+
+
+async def test_projection_writes_vectors_with_model_id(mvp0_db):
+    session_factory, _ = mvp0_db
+    await _emit(session_factory, 3)
+    worker = ProjectionWorker(session_factory, embedder=HashingEmbedder())
+    assert (await worker.process_batch()).applied == 3
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT embedding_model, vector_dims(embedding) AS dims, "
+                    "embedding <=> embedding AS self_distance FROM embedding_projection"
+                )
+            )
+        ).all()
+    assert {row.embedding_model for row in rows} == {"hashing-v1/256"}
+    assert {row.dims for row in rows} == {1536}
+    assert all(abs(row.self_distance) < 1e-6 for row in rows)
+    assert (await worker.status())["embedder"] == "hashing-v1/256"
+
+
+async def test_no_embedder_keeps_vector_and_model_null(mvp0_db):
+    session_factory, _ = mvp0_db
+    await _emit(session_factory, 1)
+    await ProjectionWorker(session_factory).process_batch()
+    nulls = await _scalar(
+        session_factory,
+        "SELECT count(*) FROM embedding_projection "
+        "WHERE embedding IS NULL AND embedding_model IS NULL",
+    )
+    assert nulls == 1

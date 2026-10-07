@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     api_keys: str = ""
     # memory keeps the smoke path DB-free. postgres is the canonical action/projection backend.
     action_backend: Literal["memory", "postgres"] = "memory"
+    # none keeps embedding NULL; hashing is deterministic; fastembed needs the [embeddings] extra.
+    embedder: Literal["none", "hashing", "fastembed"] = "none"
+    embedding_model: str | None = None
+    embedding_cache_dir: str | None = None
 
     @model_validator(mode="after")
     def _no_placeholder_secret_outside_dev(self) -> "Settings":

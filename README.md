@@ -44,11 +44,14 @@ Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; def
 - action / action_run persistence and the approval gate (`POST /v1/actions/{id}/approve|reject|execute`). A report cannot run from `proposed` while `requires_approval` is true
 - projection worker (`src/archontos/projection/worker.py`) replays `domain_event` into `embedding_projection` and advances `projection_checkpoint` (`POST /v1/projections/drain`, `/rebuild`)
 - `REQUEST_COUNT` is incremented per request
+- embeddings: `ARCHONTOS_EMBEDDER=fastembed` (`pip install 'archontos[embeddings]'`, multilingual
+  ONNX model, no torch) or `hashing` (deterministic, dependency-free). Default `none` keeps
+  `embedding` NULL. Vectors are L2-normalised, zero-padded to `vector(1536)`, and tagged with
+  `embedding_model` (migration 009)
 - optional API key gate: set `ARCHONTOS_API_KEYS`; `/health` and `/metrics` stay open
 
 Still incomplete:
 
-- embedding vectors are not computed (`embedding` stays null until an embedder is configured)
 - Helm has a ServiceAccount and default-deny NetworkPolicy, not GitOps reconciliation or an HPA
 - identity propagation beyond a shared API key (RLS, per-user actor) is still P3
 
