@@ -1,11 +1,14 @@
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.enabled }}
+{{- $hpa := include "archontos.autoscaling" (dict "svc" $svc "root" $) | fromYaml }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: archontos-{{ $name }}
 spec:
-  replicas: 1
+  {{- if not $hpa.enabled }}
+  replicas: {{ default 1 $svc.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       app: archontos-{{ $name }}
@@ -23,6 +26,8 @@ spec:
           command: ["uvicorn", "{{ $svc.module }}", "--host", "0.0.0.0", "--port", "{{ $svc.port }}"]
           ports:
             - containerPort: {{ $svc.port }}
+          resources:
+            {{- toYaml (default $.Values.resources $svc.resources) | nindent 12 }}
           env:
           {{- range $key, $value := $.Values.env }}
             - name: {{ $key }}
