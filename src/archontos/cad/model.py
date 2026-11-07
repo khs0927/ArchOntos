@@ -265,7 +265,7 @@ DEFAULT_MODEL_RULE_SET = ModelMappingRuleSet(
             "skp-door-tag", "door", _SKP, tag_pattern=r"(?i)^(A-DOOR|DOORS?|문(?!자)|도어)"
         ),
         ModelMappingRule(
-            "skp-window-tag", "window", _SKP, tag_pattern=r"(?i)^(A-GLAZ|A-WIND|WINDOWS?|창)"
+            "skp-window-tag", "window", _SKP, tag_pattern=r"(?i)^(A-GLAZ|A-WIND|WINDOWS?|창(?!고))"
         ),
         ModelMappingRule(
             "skp-column-tag", "column", _SKP, tag_pattern=r"(?i)^(A-COLS|S-COLS|COLUMNS?|기둥)"
