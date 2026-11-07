@@ -22,7 +22,7 @@
 - E2E
 - API auth/identity propagation — done: named API keys, per-request actor, role-based permissions,
   four-eyes approval, least-privilege DB role, audit_log append-only and jurisdiction RLS
-  (ops/RUNBOOK.md). Open: external IdP (OIDC)
+  (ops/RUNBOOK.md). external IdP (OIDC bearer/JWKS) done
 - migration/backup/restore runbook
 - metrics and structured audit logs
 

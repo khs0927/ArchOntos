@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-11-07
+- OIDC bearer 인증 추가 (JWKS 검증, 비대칭 알고리즘 고정, iss/aud/exp 필수, 토큰 역할·관할 매핑, fail-closed)
+
 ## Unreleased
 
 - Least-privilege DB role: migration 012 creates the `archontos_app` group (DML only; on

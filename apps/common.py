@@ -29,6 +29,7 @@ from archontos.identity import (
 )
 from archontos.ingestion.persistence import CanonicalizationError
 from archontos.observability import REQUEST_COUNT
+from archontos.oidc import OidcError, bearer_token, get_verifier
 from archontos.rules.engine import RuleEvaluationError
 
 OPEN_PATHS = {"/health", "/metrics"}
@@ -61,8 +62,21 @@ def resolve_principal(request: Request, keys: dict[str, str]) -> Principal | Non
     return Principal(actor=actor, authenticated=False)
 
 
+async def _authenticate(request: Request, keys: dict[str, str]) -> Principal | None:
+    """Bearer token (OIDC) first when presented; a bad token never falls back to API keys."""
+    verifier = get_verifier()
+    if verifier is not None:
+        token = bearer_token(request.headers.get("authorization", ""))
+        if token is not None:
+            return await verifier.verify(token)
+        if not keys:
+            return None  # OIDC is the only method and no valid credential was presented
+    return resolve_principal(request, keys)
+
+
 def authorization_enabled() -> bool:
-    return bool(get_settings().actor_roles.strip())
+    # With OIDC configured the token's roles are the authority, so every route is checked.
+    return bool(get_settings().actor_roles.strip()) or get_verifier() is not None
 
 
 def require(permission: Permission):
@@ -116,7 +130,15 @@ def create_service(name: str) -> FastAPI:
         if request.url.path in OPEN_PATHS:
             principal: Principal | None = Principal(actor=ANONYMOUS, authenticated=False)
         else:
-            principal = resolve_principal(request, keys)
+            try:
+                principal = await _authenticate(request, keys)
+            except OidcError:
+                REQUEST_COUNT.labels(service=name, route="unauthorized").inc()
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "invalid bearer token"},
+                    headers={"www-authenticate": "Bearer"},
+                )
         if principal is None:
             REQUEST_COUNT.labels(service=name, route="unauthorized").inc()
             return JSONResponse(status_code=401, content={"detail": "missing or invalid api key"})

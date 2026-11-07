@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     api_keys: str = ""
     # Empty disables authorization. Otherwise actor:role+role,... (see archontos.authz).
     actor_roles: str = ""
+    # OIDC bearer auth (external IdP). Enabled when both issuer and audience are set.
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    # Empty means <issuer>/.well-known/jwks.json. Asymmetric algorithms only.
+    oidc_jwks_url: str = ""
+    oidc_algorithms: str = "RS256,ES256"
+    oidc_actor_claim: str = "preferred_username"
+    oidc_roles_claim: str = "roles"
+    # Optional claim carrying the actor's jurisdictions (row-level security input).
+    oidc_jurisdictions_claim: str = ""
     # Optional per-actor jurisdictions for row-level security: actor:KR+JP,...
     actor_jurisdictions: str = ""
     # memory keeps the smoke path DB-free. postgres is the canonical action/projection backend.

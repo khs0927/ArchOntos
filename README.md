@@ -53,13 +53,12 @@ Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; def
   ONNX model, no torch) or `hashing` (deterministic, dependency-free). Default `none` keeps
   `embedding` NULL. Vectors are L2-normalised, zero-padded to `vector(1536)`, and tagged with
   `embedding_model` (migration 009)
-- optional API key gate: set `ARCHONTOS_API_KEYS`; `/health` and `/metrics` stay open
+- optional OIDC bearer auth (`ARCHONTOS_OIDC_*`, see ops/RUNBOOK.md) and API key gate: set `ARCHONTOS_API_KEYS`; `/health` and `/metrics` stay open
 
 Still incomplete:
 
 - Helm has a ServiceAccount, NetworkPolicy (set `networkPolicy.extraEgress` for the database)
   and optional per-service HPA (`autoscaling.enabled`); no GitOps reconciliation yet
-- external identity provider (OIDC/JWT): identity is API-key based today
 
 ## Architecture
 
