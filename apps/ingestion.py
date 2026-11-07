@@ -1,13 +1,17 @@
 import asyncio
 from dataclasses import asdict
-from typing import Annotated
+from datetime import UTC, date, datetime
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import HTTPException, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from apps.common import create_service, require
 from archontos.authz import Permission
+from archontos.cad.check_persistence import CadCheckRepository, inputs_digest
+from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_checks
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
 from archontos.cad.persistence import CadConflict, CadRepository, InvalidCadCursor, facts_export
 from archontos.config import get_settings
@@ -268,3 +272,118 @@ async def cad_revision_facts(revision_id: UUID):
         revision = await _revision_or_404(repo, revision_id)
         objects = await repo.all_objects(str(revision_id))
     return facts_export(revision, objects)
+
+
+# --- MVP-2: regulation-to-CAD checks ---------------------------------------------------------
+
+
+class CadCheckRequest(BaseModel):
+    """Run the active, approved rules of a jurisdiction against one CAD revision.
+
+    ``land_parcel`` and ``facts`` follow the Ontology-platform ``POST /api/v1/regulation/evaluate``
+    body (``{rule, land_parcel, facts}``) and the site-pipeline ``parcel_facts`` shape. They are
+    taken from the request only; this endpoint makes no network calls.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    jurisdiction_code: str = Field(default="KR", min_length=2, max_length=20)
+    reference_date: date | None = None
+    land_parcel: dict[str, Any] = Field(default_factory=dict)
+    facts: dict[str, Any] = Field(default_factory=dict)
+    fact_units: dict[str, str] = Field(default_factory=dict)
+    rule_version_ids: list[UUID] | None = Field(default=None, max_length=500)
+
+
+@app.post(
+    "/v1/cad/revisions/{revision_id}/checks",
+    status_code=201,
+    dependencies=[require(Permission.CAD_CHECK)],
+)
+async def run_cad_checks(revision_id: UUID, payload: CadCheckRequest, response: Response):
+    """Evaluate bound rules; same revision + inputs + rules -> same run (200, created false)."""
+    if payload.jurisdiction_code not in current_jurisdictions():
+        raise HTTPException(status_code=403, detail="jurisdiction not allowed for this caller")
+    reference_date = payload.reference_date or datetime.now(UTC).date()
+    ids = [str(i) for i in payload.rule_version_ids] if payload.rule_version_ids else None
+    async with get_session_factory()() as session, session.begin():
+        cad = CadRepository(session)
+        await _revision_or_404(cad, revision_id)
+        objects = await cad.all_objects(str(revision_id))
+        checks = CadCheckRepository(session)
+        rules = await checks.load_rules(reference_date=reference_date, rule_version_ids=ids)
+        try:
+            run = run_checks(
+                rules,
+                extract_fact_space(objects),
+                jurisdiction=payload.jurisdiction_code,
+                reference_date=reference_date,
+                land_parcel=payload.land_parcel,
+                extra_facts=payload.facts,
+                extra_fact_units=payload.fact_units,
+            )
+        except CadCheckInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        bound = [r.rule for r in run.results]
+        digest = inputs_digest(
+            land_parcel=payload.land_parcel,
+            facts={"facts": payload.facts, "fact_units": payload.fact_units},
+            rules=bound,
+        )
+        persisted = await checks.persist(
+            revision_id=str(revision_id), run=run, land_parcel=payload.land_parcel, digest=digest
+        )
+        results, _ = await checks.list_results(
+            str(revision_id),
+            run_id=persisted.run["id"],
+            outcome=None,
+            rule_version_id=None,
+            arch_object_id=None,
+            limit=500,
+            cursor=None,
+        )
+    if not persisted.created:
+        response.status_code = 200
+    return {
+        "created": persisted.created,
+        "run": persisted.run,
+        "skipped_rules": run.skipped,
+        "results": results,
+    }
+
+
+@app.get("/v1/cad/revisions/{revision_id}/checks", dependencies=[require(Permission.CAD_READ)])
+async def list_cad_check_runs(revision_id: UUID):
+    async with get_session_factory()() as session, session.begin():
+        await _revision_or_404(CadRepository(session), revision_id)
+        return {"items": await CadCheckRepository(session).list_runs(str(revision_id))}
+
+
+@app.get(
+    "/v1/cad/revisions/{revision_id}/checks/results",
+    dependencies=[require(Permission.CAD_READ)],
+)
+async def list_cad_check_results(
+    revision_id: UUID,
+    run_id: UUID | None = None,
+    outcome: Annotated[str | None, Query(pattern=r"^(PASS|FAIL|REVIEW)$")] = None,
+    rule_version_id: UUID | None = None,
+    arch_object_id: UUID | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    cursor: str | None = None,
+):
+    async with get_session_factory()() as session, session.begin():
+        await _revision_or_404(CadRepository(session), revision_id)
+        try:
+            items, nxt = await CadCheckRepository(session).list_results(
+                str(revision_id),
+                run_id=str(run_id) if run_id else None,
+                outcome=outcome,
+                rule_version_id=str(rule_version_id) if rule_version_id else None,
+                arch_object_id=str(arch_object_id) if arch_object_id else None,
+                limit=limit,
+                cursor=cursor,
+            )
+        except InvalidCadCursor as exc:
+            raise _cad_cursor_error(exc) from exc
+    return {"items": items, "next_cursor": nxt}

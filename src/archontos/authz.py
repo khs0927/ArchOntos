@@ -35,6 +35,7 @@ class Permission(StrEnum):
     RULE_COMPILE = "rule.compile"
     CAD_READ = "cad.read"
     CAD_INGEST = "cad.ingest"
+    CAD_CHECK = "cad.check"
 
 
 _VIEWER = frozenset(
@@ -50,8 +51,14 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     # Legal-knowledge pipeline: curators bring sources and candidate assertions in;
     # reviewers accept/reject assertions and compile approved ones into rules.
     "curator": _VIEWER
-    | {Permission.SOURCE_INGEST, Permission.ASSERTION_PROPOSE, Permission.CAD_INGEST},
-    "reviewer": _VIEWER | {Permission.ASSERTION_REVIEW, Permission.RULE_COMPILE},
+    | {
+        Permission.SOURCE_INGEST,
+        Permission.ASSERTION_PROPOSE,
+        Permission.CAD_INGEST,
+        Permission.CAD_CHECK,
+    },
+    "reviewer": _VIEWER
+    | {Permission.ASSERTION_REVIEW, Permission.RULE_COMPILE, Permission.CAD_CHECK},
     "admin": frozenset(Permission),
 }
 
