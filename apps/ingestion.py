@@ -15,7 +15,19 @@ from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_che
 from archontos.cad.diff import DiffInputError, DiffTolerances
 from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
-from archontos.cad.persistence import CadConflict, CadRepository, InvalidCadCursor, facts_export
+from archontos.cad.ifc import parse_ifc
+from archontos.cad.links import LinkInputError, ModelLinkRepository
+from archontos.cad.model import UnsupportedModelFormat, building_facts, detect_source_format
+from archontos.cad.persistence import (
+    CadConflict,
+    CadRepository,
+    InvalidCadCursor,
+    decode_cursor,
+    encode_cursor,
+    facts_export,
+    filter_fingerprint,
+)
+from archontos.cad.skp import parse_skp_json
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
 from archontos.identity import current_jurisdictions, current_principal
@@ -133,6 +145,11 @@ async def ingest_lawgo_current(query: Annotated[str, Query(min_length=1)]):
 # --- MVP-1: CAD (DXF) drawings -> raw entities -> architectural objects -------------------
 
 CAD_MAX_BYTES = 50 * 1024 * 1024
+_CAD_STORAGE = {
+    "dxf": ("image/vnd.dxf", ".dxf"),
+    "ifc": ("application/x-step", ".ifc"),
+    "skp_json": ("application/json", ".json"),
+}
 _SOURCE_TEXT = r"^[^\x00-\x1f]{1,300}$"
 
 
@@ -146,20 +163,40 @@ async def upload_cad_artifact(
     revision_label: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
     file_name: Annotated[str | None, Query(max_length=255)] = None,
     assume_units: Annotated[str, Query(pattern=r"^(mm|cm|m|in|ft)$")] = "mm",
+    source_format: Annotated[str, Query(pattern=r"^(auto|dxf|ifc|skp_json)$")] = "auto",
 ):
-    """Upload DXF bytes (request body); returns the revision. Same bytes -> same ids (200)."""
+    """Upload DXF, IFC or SketchUp-JSON bytes (request body); returns the revision.
+
+    ``source_format=auto`` sniffs the content (``ISO-10303-21`` -> IFC, ``{`` -> SketchUp JSON
+    ``archontos-skp-export/1``), then the file name / content type, else DXF. Binary ``.skp``
+    is refused with 415. Same bytes -> same ids (200)."""
     if jurisdiction_code not in current_jurisdictions():
         raise HTTPException(status_code=403, detail="jurisdiction not allowed for this caller")
     data = await request.body()
     if len(data) > CAD_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="DXF upload exceeds 50 MiB")
+        raise HTTPException(status_code=413, detail="CAD upload exceeds 50 MiB")
     try:
-        drawing = await asyncio.to_thread(parse_dxf, data, assume_units=assume_units)
+        fmt = detect_source_format(
+            data,
+            explicit=source_format,
+            content_type=request.headers.get("content-type"),
+            file_name=file_name,
+        )
+    except UnsupportedModelFormat as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    try:
+        if fmt == "ifc":
+            drawing = await asyncio.to_thread(parse_ifc, data)
+        elif fmt == "skp_json":
+            drawing = await asyncio.to_thread(parse_skp_json, data)
+        else:
+            drawing = await asyncio.to_thread(parse_dxf, data, assume_units=assume_units)
     except CadParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except CadDependencyError as exc:
         raise HTTPException(status_code=501, detail=str(exc)) from exc
-    artifact = await _artifact_store().put_bytes("cad", data, mime="image/vnd.dxf", suffix=".dxf")
+    mime, suffix = _CAD_STORAGE[fmt]
+    artifact = await _artifact_store().put_bytes("cad", data, mime=mime, suffix=suffix)
     async with get_session_factory()() as session:
         try:
             async with session.begin():
@@ -310,10 +347,21 @@ async def run_cad_checks(revision_id: UUID, payload: CadCheckRequest, response: 
     ids = [str(i) for i in payload.rule_version_ids] if payload.rule_version_ids else None
     async with get_session_factory()() as session, session.begin():
         cad = CadRepository(session)
-        await _revision_or_404(cad, revision_id)
+        revision = await _revision_or_404(cad, revision_id)
         objects = await cad.all_objects(str(revision_id))
         checks = CadCheckRepository(session)
         rules = await checks.load_rules(reference_date=reference_date, rule_version_ids=ids)
+        # MVP-4: IFC storeys give building.floor_count etc.; the model wins, never the caller.
+        model_facts, model_units = building_facts(revision.get("model_meta"))
+        extra_facts = dict(payload.facts or {})
+        extra_units = dict(payload.fact_units or {})
+        if model_facts:
+            if "building" in extra_facts:
+                raise HTTPException(
+                    status_code=422, detail="facts.building is derived from the model storeys"
+                )
+            extra_facts.update(model_facts)
+            extra_units.update(model_units)
         try:
             run = run_checks(
                 rules,
@@ -321,8 +369,8 @@ async def run_cad_checks(revision_id: UUID, payload: CadCheckRequest, response: 
                 jurisdiction=payload.jurisdiction_code,
                 reference_date=reference_date,
                 land_parcel=payload.land_parcel,
-                extra_facts=payload.facts,
-                extra_fact_units=payload.fact_units,
+                extra_facts=extra_facts,
+                extra_fact_units=extra_units,
             )
         except CadCheckInputError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -468,4 +516,69 @@ async def list_cad_diff_changes(
             )
         except InvalidCadCursor as exc:
             raise _cad_cursor_error(exc) from exc
+    return {"items": items, "next_cursor": nxt}
+
+
+# --- MVP-4: cross-source model links (IFC / SketchUp JSON / DXF) ----------------------------
+
+
+class ModelLinkRequest(BaseModel):
+    """Link two objects of different revisions (usually different source formats)."""
+
+    model_config = ConfigDict(extra="forbid")
+    object_a_id: UUID
+    object_b_id: UUID
+    note: str | None = Field(default=None, max_length=1000)
+
+
+@app.post("/v1/models/links", status_code=201, dependencies=[require(Permission.CAD_LINK)])
+async def create_model_link(payload: ModelLinkRequest, response: Response):
+    """Manual cross-source link; the same pair again returns the existing link (200)."""
+    async with get_session_factory()() as session:
+        try:
+            async with session.begin():
+                persisted = await ModelLinkRepository(session).create_manual(
+                    object_a_id=str(payload.object_a_id),
+                    object_b_id=str(payload.object_b_id),
+                    note=payload.note,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except LinkInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="model link conflict") from exc
+    if not persisted.created:
+        response.status_code = 200
+    return {"created": persisted.created, "link": persisted.link}
+
+
+@app.get("/v1/models/links", dependencies=[require(Permission.CAD_READ)])
+async def list_model_links(
+    project_id: Annotated[str | None, Query(max_length=200)] = None,
+    revision_id: UUID | None = None,
+    object_id: UUID | None = None,
+    method: Annotated[str | None, Query(pattern=r"^(shared_ref|manual)$")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    cursor: str | None = None,
+):
+    """Cross-source links visible to the caller (jurisdiction RLS), ordered by id."""
+    rev = str(revision_id) if revision_id else None
+    obj = str(object_id) if object_id else None
+    fp = filter_fingerprint(p=project_id, r=rev, o=obj, m=method)
+    try:
+        after = decode_cursor(cursor, fp) if cursor else None
+    except InvalidCadCursor as exc:
+        raise _cad_cursor_error(exc) from exc
+    async with get_session_factory()() as session, session.begin():
+        rows = await ModelLinkRepository(session).list_links(
+            project_id=project_id,
+            revision_id=rev,
+            object_id=obj,
+            method=method,
+            limit=limit + 1,
+            after=after,
+        )
+    items = rows[:limit]
+    nxt = encode_cursor(items[-1]["id"], fp) if len(rows) > limit else None
     return {"items": items, "next_cursor": nxt}

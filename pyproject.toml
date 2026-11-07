@@ -24,11 +24,15 @@ dependencies = [
   "PyJWT[crypto]>=2.8,<3",
   "opentelemetry-api>=1.29,<2",
   "opentelemetry-sdk>=1.29,<2",
+  "jsonschema>=4.23,<5",  # MIT; validates the SketchUp JSON export contract (MVP-4)
 ]
 
 [project.optional-dependencies]
 embeddings = [
   "fastembed>=0.8,<0.9",  # Apache-2.0, ONNX Runtime (no torch)
+]
+bim = [
+  "ifcopenshell>=0.8,<0.9",  # LGPL-3.0; IFC parsing for MVP-4 model import
 ]
 cad = [
   "ezdxf>=1.4,<2",  # MIT; DXF parsing for MVP-1 CAD normalization
@@ -76,5 +80,5 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # Third-party packages without type information.
-module = ["minio.*", "fastembed.*", "asyncpg.*", "pgvector.*"]
+module = ["minio.*", "fastembed.*", "asyncpg.*", "pgvector.*", "ifcopenshell.*", "jsonschema.*"]
 ignore_missing_imports = true
