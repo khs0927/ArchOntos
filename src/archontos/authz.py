@@ -33,9 +33,13 @@ class Permission(StrEnum):
     ASSERTION_PROPOSE = "assertion.propose"
     ASSERTION_REVIEW = "assertion.review"
     RULE_COMPILE = "rule.compile"
+    CAD_READ = "cad.read"
+    CAD_INGEST = "cad.ingest"
 
 
-_VIEWER = frozenset({Permission.ACTION_READ, Permission.SEARCH_QUERY, Permission.QUERY_READ})
+_VIEWER = frozenset(
+    {Permission.ACTION_READ, Permission.SEARCH_QUERY, Permission.QUERY_READ, Permission.CAD_READ}
+)
 
 ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "viewer": _VIEWER,
@@ -45,7 +49,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
     "operator": _VIEWER | {Permission.HYPEREDGE_WRITE, Permission.PROJECTION_ADMIN},
     # Legal-knowledge pipeline: curators bring sources and candidate assertions in;
     # reviewers accept/reject assertions and compile approved ones into rules.
-    "curator": _VIEWER | {Permission.SOURCE_INGEST, Permission.ASSERTION_PROPOSE},
+    "curator": _VIEWER
+    | {Permission.SOURCE_INGEST, Permission.ASSERTION_PROPOSE, Permission.CAD_INGEST},
     "reviewer": _VIEWER | {Permission.ASSERTION_REVIEW, Permission.RULE_COMPILE},
     "admin": frozenset(Permission),
 }

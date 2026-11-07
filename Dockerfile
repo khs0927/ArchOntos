@@ -8,7 +8,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY apps ./apps
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir '.[cad]'
 COPY db/migrations ./db/migrations
 
 # Run as an unprivileged user. The artifact directory is created here so a fresh named volume
