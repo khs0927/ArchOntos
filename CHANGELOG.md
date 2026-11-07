@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- MVP-3 revision diff (docs/MVP3-REVISION-DIFF.md):
+  - `archontos.cad.diff` matches `arch_object` rows of two revisions by DXF handle, then by
+    centroid distance and bbox IoU, and classifies added/removed/modified/unchanged with
+    per-property deltas (units included) under configurable tolerances.
+  - Impact analysis links changes to MVP-2 check results. Results of the base revision are
+    marked stale and never carried over. `rerun_checks` re-runs them on the target revision and
+    reports outcome transitions (PASS to FAIL and so on).
+  - Migration 017 adds `cad_revision_diff` and `cad_object_change`: append-only, jurisdiction
+    RLS, `archontos_app` SELECT/INSERT only.
+  - New endpoints `POST /v1/cad/diffs`, `GET /v1/cad/diffs/{id}` and `.../changes`.
+    Check runs and results gain `stale` and `stale_by_diff_ids`.
+  - New permission `cad.diff` (curator, reviewer, admin). `rerun_checks` also needs `cad.check`.
+  - New event `CadRevisionDiffed` on outbox topic `cad.revision-diffed`.
+
 - MVP-2 regulation-to-CAD checks (docs/MVP2-CAD-CHECKS.md):
   - `archontos.cad.checks` extracts rule DSL facts from `arch_object`: lengths in m, areas in
     m2, `fact_units`, and provenance by object id and DXF handle.

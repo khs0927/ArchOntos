@@ -61,3 +61,47 @@ def aia_plan() -> bytes:
     )
     msp.add_lwpolyline([(0, 5), (4, 5)], dxfattribs={"layer": "A-AREA"})  # open: not a space
     return _bytes(doc)
+
+
+@cache
+def revision_plan(
+    *,
+    door_x: int = 500,
+    corridor_width: int = 1100,
+    fourth_wall: bool = True,
+    extra_space: bool = False,
+    shift_handles: bool = False,
+    note: str = "",
+) -> bytes:
+    """Permit/construction pair builder (mm).
+
+    Optional entities come last so the DXF handles of the always-present ones stay stable
+    between variants; ``shift_handles`` deliberately breaks that.
+    """
+    doc = ezdxf.new("R2018")
+    doc.header["$INSUNITS"] = 4
+    for name in ("벽", "문", "실", "실명", "치수"):
+        doc.layers.add(name)
+    _door_block(doc, "D900", 900)
+    msp = doc.modelspace()
+    if shift_handles:
+        msp.add_line((0, -900), (10, -900), dxfattribs={"layer": "치수"})
+    corners = [(0, 0), (6000, 0), (6000, 4000), (0, 4000)]
+    walls = list(zip(corners, corners[1:] + corners[:1], strict=True))
+    for a, b in walls[:3]:
+        msp.add_line(a, b, dxfattribs={"layer": "벽"})
+    msp.add_blockref("D900", (door_x, 0), dxfattribs={"layer": "문"})
+    msp.add_lwpolyline(corners, close=True, dxfattribs={"layer": "실"})
+    msp.add_text("거실", dxfattribs={"layer": "실명", "insert": (3000, 2000)})
+    corridor = [(8000, 0), (16000, 0), (16000, corridor_width), (8000, corridor_width)]
+    msp.add_lwpolyline(corridor, close=True, dxfattribs={"layer": "실"})
+    msp.add_text("복도", dxfattribs={"layer": "실명", "insert": (12000, 300)})
+    if fourth_wall:
+        msp.add_line(*walls[3], dxfattribs={"layer": "벽"})
+    if extra_space:
+        box = [(20000, 0), (23000, 0), (23000, 2000), (20000, 2000)]
+        msp.add_lwpolyline(box, close=True, dxfattribs={"layer": "실"})
+        msp.add_text("창고", dxfattribs={"layer": "실명", "insert": (21500, 1000)})
+    if note:
+        msp.add_line((0, -500), (6000 + len(note), -500), dxfattribs={"layer": "치수"})
+    return _bytes(doc)

@@ -45,6 +45,14 @@
 - [x] `/v1/cad/revisions/{id}/checks` run and results API with filters and cursors
 - [ ] Object pairing (door/wall, stair/storey), storey and building facts, clear-width geometry. See docs/MVP2-CAD-CHECKS.md
 
+## MVP-3: revision diff (in progress)
+
+- [x] Deterministic object matching (DXF handle, then centroid/IoU), added/removed/modified/unchanged with unit-carrying deltas and configurable tolerances
+- [x] Impact on MVP-2 check results, stale marking of base results, optional re-run with outcome transitions
+- [x] Migration 017: cad_revision_diff / cad_object_change (append-only, RLS); outbox topic `cad.revision-diffed`
+- [x] `/v1/cad/diffs` API with `cad.diff`, filters and cursors
+- [ ] Wall/opening pairing across revisions, storey-aware matching, Ontology stale-edge export. See docs/MVP3-REVISION-DIFF.md
+
 ## 후속
 - pgvector — done: embeddings (fastembed/hashing), HNSW, paginated similarity search
 - DXF
