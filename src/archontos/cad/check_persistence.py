@@ -225,7 +225,7 @@ class CadCheckRepository:
             "reference_date": run.reference_date.isoformat(),
             **summary,
         }
-        event_id = (
+        event_id: Any = (
             await self.session.execute(
                 text(
                     """
