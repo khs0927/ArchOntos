@@ -22,9 +22,12 @@
 - E2E
 - API auth/identity propagation — done: named API keys, per-request actor, role-based permissions,
   four-eyes approval, least-privilege DB role, audit_log append-only and jurisdiction RLS
-  (ops/RUNBOOK.md). Open: external IdP (OIDC)
-- migration/backup/restore runbook
-- metrics and structured audit logs
+  (ops/RUNBOOK.md); optional OIDC/JWT identity (`ARCHONTOS_OIDC_*`, RS256 via JWKS) - done
+- migration/backup/restore runbook - done: `ops/backup.sh`, `ops/restore.sh`, CI round trip
+  (`ops/backup-restore-check.sh`), rollback procedure in ops/RUNBOOK.md
+- metrics and structured audit logs - done: Prometheus counter, JSON request log with actor and
+  request id (`ARCHONTOS_LOG_FORMAT`)
+- 0.1.0-rc1: tag once CI is green on main; open items are listed in README "Still incomplete"
 
 ## 후속
 - pgvector — done: embeddings (fastembed/hashing), HNSW, paginated similarity search

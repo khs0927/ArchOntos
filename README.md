@@ -59,7 +59,11 @@ Still incomplete:
 
 - Helm has a ServiceAccount, NetworkPolicy (set `networkPolicy.extraEgress` for the database)
   and optional per-service HPA (`autoscaling.enabled`); no GitOps reconciliation yet
-- external identity provider (OIDC/JWT): identity is API-key based today
+- OIDC/JWT identity is verified locally (RS256, JWKS) but not yet exercised against a real
+  identity provider; no token revocation/introspection, refresh or session handling
+- backups are logical (`pg_dump`) and manual; no PITR/WAL archiving, no scheduled backup job;
+  migrations have no down scripts (rollback = restore, see ops/RUNBOOK.md)
+- request/audit logs go to stdout as JSON; shipping, retention and alerting are the platform's job
 
 ## Architecture
 

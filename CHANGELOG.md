@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.1.0-rc1
+
+MVP-0 release candidate: hardening on top of the entries below.
+
+- Optional OIDC/JWT identity (`ARCHONTOS_OIDC_ISSUER|AUDIENCE|JWKS_URL`; all three or none).
+  `Authorization: Bearer` tokens are verified (RS256 only; signature, `exp`, `iss`, `aud`) with
+  PyJWT's JWKS client and become the same `Principal` as an API key: actor from
+  `ARCHONTOS_OIDC_ACTOR_CLAIM` (`sub`), roles from `ARCHONTOS_OIDC_ROLES_CLAIM` (`roles`, dotted
+  paths such as `realm_access.roles`), jurisdictions from `ARCHONTOS_OIDC_JURISDICTIONS_CLAIM`;
+  `ARCHONTOS_ACTOR_ROLES` / `_JURISDICTIONS` entries for the same actor are merged in. API keys
+  keep working side by side. With OIDC on and no API keys, anonymous requests get 401 +
+  `WWW-Authenticate: Bearer`. Disabled by default. New dependency `PyJWT[crypto]`.
+- Structured request logging: one JSON line per non-health request on stdout (`event`,
+  `request_id`, `actor`, `authenticated`, `auth`, `method`, `route` template, `status`,
+  `duration_ms`); `X-Request-Id` is accepted (validated) or generated and echoed.
+  `ARCHONTOS_LOG_FORMAT=json|text|off`, `ARCHONTOS_LOG_LEVEL`. Secrets are never logged.
+- Backup/restore: `ops/backup.sh` (pg_dump -Fc + sha256 + per-table row counts),
+  `ops/restore.sh` (checksum, refuses non-empty target without `--clean`, verifies counts),
+  `ops/backup-restore-check.sh` and a CI step running the round trip on PostgreSQL 18.
+  RUNBOOK documents backup before migration and the rollback procedure.
+
 - Least-privilege DB role: migration 012 creates the `archontos_app` group (DML only; on
   `audit_log` only SELECT/INSERT). `python -m archontos.db.roles ensure-login|check` provisions
   and verifies the service login. Compose (`db-login` service), CI (from the built image) and
