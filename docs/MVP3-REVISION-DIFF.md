@@ -13,18 +13,21 @@ Code: `archontos.cad.diff` (pure), `archontos.cad.diff_persistence` (PostgreSQL)
 Objects are matched within one kind (`wall`, `door`, `window`, `space`, `stair`, `column`,
 `opening`):
 
-1. **Handle match.** Same kind and the same DXF source handles, with exactly one candidate on
+1. **Content match.** Objects with identical layer, properties and geometry are paired first,
+   preferring equal handles (`match_method` is `handle` when the handles agree, else `content`).
+   This stops reassigned handles from pairing an object with a look-alike.
+2. **Handle match.** Same kind and the same DXF source handles, with exactly one candidate on
    each side. It is refused when the objects do not overlap and are more than
    `handle_max_shift` apart (handles reassigned by another tool). Disable with
    `match_by_handle: false`.
-2. **Geometric match** for the rest. A pair is a candidate when the bbox IoU is at least
+3. **Geometric match** for the rest. A pair is a candidate when the bbox IoU is at least
    `match_min_iou` or the centroid distance is at most `match_centroid`. Pairs are assigned
    greedily, best IoU first, ties by distance and id. Line-like objects get a 1 cm padding so
    walls have a footprint. A grid index keeps this fast for large drawings.
-3. What is left on the base side is `removed`, what is left on the target side is `added`.
+4. What is left on the base side is `removed`, what is left on the target side is `added`.
 
 A matched pair is `unchanged` when its `object_hash` is equal or when every delta is within
-tolerance. Otherwise it is `modified`. `match_method` (`handle` or `geometry`) and
+tolerance. Otherwise it is `modified`. `match_method` (`handle`, `content` or `geometry`) and
 `match_score` are stored.
 
 ## 2. Deltas and tolerances

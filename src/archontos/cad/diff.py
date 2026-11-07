@@ -16,6 +16,7 @@ and ``transitions`` compares check outcomes between the two revisions.
 
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from collections import defaultdict
@@ -167,6 +168,43 @@ Pairs = dict[str, tuple[str, float]]
 def _handle_key(obj: Mapping[str, Any]) -> tuple[str, tuple[str, ...]] | None:
     handles = tuple(obj.get("source_handles") or ())
     return (obj["kind"], handles) if handles else None
+
+
+def _signature(obj: Mapping[str, Any]) -> str:
+    """Content identity that ignores handles and ids (layer, properties, geometry)."""
+    body = (obj.get("layer"), obj.get("properties"), obj.get("geometry"))
+    return json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _match_by_content(base: list[dict[str, Any]], target: list[dict[str, Any]]) -> Pairs:
+    """Pair objects whose content is identical, preferring the same DXF handles.
+
+    Runs before handle matching so that reassigned handles cannot pair an object with a
+    different, merely look-alike one.
+    """
+    groups: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = defaultdict(
+        lambda: ([], [])
+    )
+    for obj in base:
+        groups[_signature(obj)][0].append(obj)
+    for obj in target:
+        groups[_signature(obj)][1].append(obj)
+    pairs: Pairs = {}
+    for bs, ts in groups.values():
+        free = list(ts)
+        rest = []
+        for b in bs:  # same handles first
+            hit = next(
+                (t for t in free if t.get("source_handles") == b.get("source_handles")), None
+            )
+            if hit is None:
+                rest.append(b)
+            else:
+                free.remove(hit)
+                pairs[b["id"]] = (hit["id"], 1.0)
+        for b, t in zip(rest, free, strict=False):
+            pairs[b["id"]] = (t["id"], 1.0)
+    return pairs
 
 
 def _match_by_handle(
@@ -416,9 +454,26 @@ def diff_objects(
     for kind in sorted({o["kind"] for o in (*base, *target)}):
         kb = [o for o in base if o["kind"] == kind]
         kt = [o for o in target if o["kind"] == kind]
-        pairs: Pairs = _match_by_handle(kb, kt, shapes, tol) if tol.match_by_handle else {}
-        methods = dict.fromkeys(pairs, "handle")
+        by_id_kt = {o["id"]: o for o in kt}
+        pairs: Pairs = _match_by_content(kb, kt)
+        # identical content: "handle" when the DXF handles agree too, else "content"
+        methods = {
+            bid: "handle"
+            if by_b[bid].get("source_handles") == by_id_kt[tid].get("source_handles")
+            else "content"
+            for bid, (tid, _s) in pairs.items()
+        }
         taken = {t for t, _ in pairs.values()}
+        if tol.match_by_handle:
+            hp = _match_by_handle(
+                [o for o in kb if o["id"] not in pairs],
+                [o for o in kt if o["id"] not in taken],
+                shapes,
+                tol,
+            )
+            pairs.update(hp)
+            methods.update(dict.fromkeys(hp, "handle"))
+            taken = {t for t, _ in pairs.values()}
         geo = _match_geometric(
             [o for o in kb if o["id"] not in pairs],
             [o for o in kt if o["id"] not in taken],

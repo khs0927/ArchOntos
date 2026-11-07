@@ -45,7 +45,7 @@ CREATE TABLE cad_object_change (
     CHECK (kind IN ('wall','door','window','space','stair','column','opening')),
   base_object_id uuid REFERENCES arch_object(id),
   target_object_id uuid REFERENCES arch_object(id),
-  match_method text CHECK (match_method IN ('handle','geometry')),
+  match_method text CHECK (match_method IN ('handle','content','geometry')),
   match_score double precision,
   label text NOT NULL,
   base_handles text[] NOT NULL DEFAULT '{}',
