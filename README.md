@@ -176,3 +176,15 @@ The OC value is intentionally excluded from canonical request metadata and error
 - projection stores can be deleted and rebuilt without loss of canonical truth.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/MVP0.md`](docs/MVP0.md).
+
+## MVP-4: IFC / SketchUp model mapping
+
+`POST /v1/cad/artifacts` also accepts IFC (`.ifc`, ifcopenshell via the `bim` extra) and the
+SketchUp JSON export contract `archontos-skp-export/1` (`.skp` binaries are refused with 415).
+The format is detected automatically or set with `source_format`. IFC classes and SketchUp
+tags or component definitions map to the same `arch_object` kinds through a versioned rule
+set (`model-2026.11`, which adds `slab`). Quantities are normalised to m, m2 and m3. IFC storeys
+give `building.floor_count`. MVP-2 checks and MVP-3 diffs run unchanged on these revisions.
+Objects carry source refs (DXF handle, IFC GlobalId, SketchUp persistent_id), and
+`GET/POST /v1/models/links` (`cad.read` / `cad.link`) exposes the links between sources
+(migration 018). See [docs/MVP4-IFC-SKETCHUP.md](docs/MVP4-IFC-SKETCHUP.md).

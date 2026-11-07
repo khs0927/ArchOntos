@@ -61,3 +61,11 @@
 - approved actions — done: proposal → approval gate → execution with audit
 
 > 일정은 고정 주차보다 Definition of Done 기준으로 진행한다.
+
+## MVP-4: IFC / SketchUp mapping
+- [x] Source-agnostic model import (`archontos.cad.model`); IFC via ifcopenshell (`bim` extra); SketchUp JSON export contract with JSON Schema
+- [x] Versioned model mapping rules (`model-2026.11`), units normalized to m/m2/m3, `slab` kind
+- [x] Migration 018: `source_format`, `model_meta_json`, `arch_object_source_ref`, `model_object_link` (append-only, RLS)
+- [x] `building.floor_count` / `basement_count` from IFC storeys; MVP-2 checks and MVP-3 diffs on IFC/SKP revisions
+- [x] `/v1/models/links` (auto `shared_ref` by IFC GlobalId, manual links) with `cad.link`
+- [ ] SketchUp Ruby exporter (via the SketchUp MCP), Revit→IFC producer automation, geometry-based IFC↔DXF auto-linking, IfcOpeningElement/IfcRelVoids handling
