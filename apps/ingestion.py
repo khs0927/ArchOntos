@@ -8,15 +8,17 @@ from fastapi import HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
-from apps.common import create_service, require
-from archontos.authz import Permission
+from apps.common import authorization_enabled, create_service, require
+from archontos.authz import AuthorizationError, Permission, authorize
 from archontos.cad.check_persistence import CadCheckRepository, inputs_digest
 from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_checks
+from archontos.cad.diff import DiffInputError, DiffTolerances
+from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
 from archontos.cad.persistence import CadConflict, CadRepository, InvalidCadCursor, facts_export
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
-from archontos.identity import current_jurisdictions
+from archontos.identity import current_jurisdictions, current_principal
 from archontos.ingestion.adapters import LawGoKrAdapter, SourceAdapterError
 from archontos.ingestion.contracts import NormalizedLegalVersion
 from archontos.ingestion.persistence import CanonicalizationError, SourceVersionConflict
@@ -383,6 +385,86 @@ async def list_cad_check_results(
                 arch_object_id=str(arch_object_id) if arch_object_id else None,
                 limit=limit,
                 cursor=cursor,
+            )
+        except InvalidCadCursor as exc:
+            raise _cad_cursor_error(exc) from exc
+    return {"items": items, "next_cursor": nxt}
+
+
+# --- MVP-3: permit vs construction / revision diff ---------------------------------------------
+
+
+class CadDiffRequest(BaseModel):
+    """Diff two revisions of one drawing lineage, or any explicitly paired two (permit set vs
+    construction set). ``rerun_checks`` re-runs, on the target revision, every check run of
+    the base revision (same jurisdiction, date, land parcel and caller facts) and reports the
+    outcome transitions; it also needs ``cad.check``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_revision_id: UUID
+    target_revision_id: UUID
+    tolerances: dict[str, Any] = Field(default_factory=dict)
+    rerun_checks: bool = False
+
+
+@app.post("/v1/cad/diffs", status_code=201, dependencies=[require(Permission.CAD_DIFF)])
+async def create_cad_diff(payload: CadDiffRequest, response: Response):
+    """Same revisions + tolerances + rerun flag -> same diff (200, created false)."""
+    if payload.rerun_checks:
+        try:
+            authorize(current_principal(), Permission.CAD_CHECK, enabled=authorization_enabled())
+        except AuthorizationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    try:
+        tolerances = DiffTolerances.from_mapping(payload.tolerances)
+        async with get_session_factory()() as session, session.begin():
+            persisted = await CadDiffRepository(session).create(
+                base_revision_id=str(payload.base_revision_id),
+                target_revision_id=str(payload.target_revision_id),
+                tolerances=tolerances,
+                rerun_checks=payload.rerun_checks,
+            )
+    except RevisionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DiffInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not persisted.created:
+        response.status_code = 200
+    return {"created": persisted.created, "diff": persisted.diff}
+
+
+async def _diff_or_404(repo: CadDiffRepository, diff_id: UUID) -> dict:
+    diff = await repo.get_diff(str(diff_id))
+    if diff is None:
+        raise HTTPException(status_code=404, detail="CAD diff not found")
+    return diff
+
+
+@app.get("/v1/cad/diffs/{diff_id}", dependencies=[require(Permission.CAD_DIFF)])
+async def get_cad_diff(diff_id: UUID):
+    async with get_session_factory()() as session, session.begin():
+        return await _diff_or_404(CadDiffRepository(session), diff_id)
+
+
+@app.get("/v1/cad/diffs/{diff_id}/changes", dependencies=[require(Permission.CAD_DIFF)])
+async def list_cad_diff_changes(
+    diff_id: UUID,
+    change_type: Annotated[
+        str | None, Query(pattern=r"^(added|removed|modified|unchanged)$")
+    ] = None,
+    kind: Annotated[
+        str | None, Query(pattern=r"^(wall|door|window|space|stair|column|opening)$")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    cursor: str | None = None,
+):
+    async with get_session_factory()() as session, session.begin():
+        repo = CadDiffRepository(session)
+        await _diff_or_404(repo, diff_id)
+        try:
+            items, nxt = await repo.list_changes(
+                str(diff_id), change_type=change_type, kind=kind, limit=limit, cursor=cursor
             )
         except InvalidCadCursor as exc:
             raise _cad_cursor_error(exc) from exc

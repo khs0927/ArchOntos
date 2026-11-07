@@ -11,7 +11,15 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from archontos.cad.checks import CHECKER_VERSION, CheckResult, CheckRule, CheckRun
+from archontos.cad.checks import (
+    CHECKER_VERSION,
+    FACT_KINDS,
+    CheckResult,
+    CheckRule,
+    CheckRun,
+    extract_fact_space,
+    run_checks,
+)
 from archontos.cad.dxf import CAD_NAMESPACE, canonical_json, sha256_hex
 from archontos.cad.persistence import decode_cursor, encode_cursor, filter_fingerprint
 
@@ -39,6 +47,17 @@ _RULES_SQL = """
      GROUP BY rv.id, r.title, sd.jurisdiction_code
      ORDER BY rv.id
 """
+
+
+#: Keys of a stored run's ``facts_json`` that come from the drawing/run, not from the caller.
+_DERIVED_FACT_ROOTS = frozenset({"drawing", "context", "fact_units", "land_parcel", *FACT_KINDS})
+
+
+def caller_inputs(run: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Recover the caller ``facts`` and ``fact_units`` of a stored run (for a re-run)."""
+    facts = {k: v for k, v in (run["facts"] or {}).items() if k not in _DERIVED_FACT_ROOTS}
+    units = {p: u for p, u in (run["fact_units"] or {}).items() if p.split(".", 1)[0] in facts}
+    return facts, units
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,11 +110,22 @@ def result_view(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: Diffs that supersede a revision's checks: the revision is the base of a lineage diff to a
+#: revision created no earlier, with at least one added/removed/modified object. Check runs
+#: and results of such a revision are stale (docs/MVP3-REVISION-DIFF.md).
+
 _RUN_SELECT = """
     SELECT c.id::text AS id, c.revision_id::text AS revision_id, c.jurisdiction_code,
            c.reference_date, c.land_parcel_json AS land_parcel, c.inputs_digest,
            c.checker_version, c.rule_count, c.pass_count, c.fail_count, c.review_count,
-           c.not_applicable_count, c.created_by, c.created_at
+           c.not_applicable_count, c.created_by, c.created_at,
+           ARRAY(SELECT d.id::text FROM cad_revision_diff d
+      JOIN cad_revision tr ON tr.id = d.target_revision_id
+      JOIN cad_revision br ON br.id = d.base_revision_id
+     WHERE d.base_revision_id = c.revision_id AND d.relation = 'lineage'
+       AND tr.created_at >= br.created_at
+       AND d.added_count + d.removed_count + d.modified_count > 0
+     ORDER BY d.id) AS stale_by_diff_ids
       FROM cad_check_run c
 """
 
@@ -104,6 +134,7 @@ def _run_row(row: Any) -> dict[str, Any]:
     out = dict(row._mapping)
     out["reference_date"] = out["reference_date"].isoformat()
     out["created_at"] = out["created_at"].isoformat()
+    out["stale"] = bool(out["stale_by_diff_ids"])
     return out
 
 
@@ -142,6 +173,72 @@ class CadCheckRepository:
             )
         ).first()
         return _run_row(row) if row else None
+
+    async def run_inputs(self, run_id: str) -> dict[str, Any]:
+        row = (
+            await self.session.execute(
+                text(
+                    "SELECT jurisdiction_code, reference_date, land_parcel_json AS land_parcel, "
+                    "facts_json AS facts, fact_units_json AS fact_units "
+                    "FROM cad_check_run WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": run_id},
+            )
+        ).one()
+        return dict(row._mapping)
+
+    async def all_results(self, revision_id: str, run_id: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        cursor = None
+        while True:
+            page, cursor = await self.list_results(
+                revision_id,
+                run_id=run_id,
+                outcome=None,
+                rule_version_id=None,
+                arch_object_id=None,
+                limit=500,
+                cursor=cursor,
+            )
+            out.extend(page)
+            if cursor is None:
+                return out
+
+    async def evaluate(
+        self,
+        *,
+        revision_id: str,
+        objects: list[dict[str, Any]],
+        jurisdiction_code: str,
+        reference_date: date,
+        land_parcel: dict[str, Any],
+        facts: dict[str, Any],
+        fact_units: dict[str, str],
+        rule_version_ids: list[str] | None,
+    ) -> tuple[PersistedCheckRun, CheckRun]:
+        """Bind rules, run them on ``objects`` and persist (idempotent). May raise
+        ``CadCheckInputError``."""
+        rules = await self.load_rules(
+            reference_date=reference_date, rule_version_ids=rule_version_ids
+        )
+        run = run_checks(
+            rules,
+            extract_fact_space(objects),
+            jurisdiction=jurisdiction_code,
+            reference_date=reference_date,
+            land_parcel=land_parcel,
+            extra_facts=facts,
+            extra_fact_units=fact_units,
+        )
+        digest = inputs_digest(
+            land_parcel=land_parcel,
+            facts={"facts": facts, "fact_units": fact_units},
+            rules=[r.rule for r in run.results],
+        )
+        persisted = await self.persist(
+            revision_id=revision_id, run=run, land_parcel=land_parcel, digest=digest
+        )
+        return persisted, run
 
     async def list_runs(self, revision_id: str) -> list[dict[str, Any]]:
         rows = (
@@ -307,7 +404,14 @@ class CadCheckRepository:
                            x.outcome, x.reason, x.details_json AS details,
                            x.jurisdiction_code, x.valid_from, x.valid_to, x.binding,
                            x.evidence_locator_json AS evidence_locator, x.fact_paths,
-                           x.arch_object_ids, x.entity_handles, c.reference_date
+                           x.arch_object_ids, x.entity_handles, c.reference_date,
+                           ARRAY(SELECT d.id::text FROM cad_revision_diff d
+      JOIN cad_revision tr ON tr.id = d.target_revision_id
+      JOIN cad_revision br ON br.id = d.base_revision_id
+     WHERE d.base_revision_id = c.revision_id AND d.relation = 'lineage'
+       AND tr.created_at >= br.created_at
+       AND d.added_count + d.removed_count + d.modified_count > 0
+     ORDER BY d.id) AS stale_by_diff_ids
                       FROM cad_check_result x
                       JOIN cad_check_run c ON c.id = x.run_id
                      WHERE c.revision_id = CAST(:rev AS uuid)
@@ -335,6 +439,7 @@ class CadCheckRepository:
         for row in rows[:limit]:
             item = result_view(dict(row._mapping))
             item["reference_date"] = item["reference_date"].isoformat()
+            item["stale"] = bool(item["stale_by_diff_ids"])
             items.append(item)
         nxt = encode_cursor(items[-1]["id"], fp) if len(rows) > limit else None
         return items, nxt
