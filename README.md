@@ -72,6 +72,14 @@ produces immutable raw entities and walls, doors, windows, spaces (area in m2), 
 each with an `archontos-aec-subject-ref/1` and `fact_units`. Install with `pip install -e '.[cad]'`.
 See [docs/MVP1-CAD.md](docs/MVP1-CAD.md).
 
+## MVP-2: regulation-to-CAD checks
+
+`POST /v1/cad/revisions/{id}/checks` (`cad.check`) checks a revision's objects against the
+active, approved rules of a jurisdiction on a reference date. Land-parcel facts are optional.
+Each result is PASS, FAIL or REVIEW and records the rule version, effective dates, evidence
+locator, and the offending objects with their DXF handles. Missing facts and unit mismatches
+give REVIEW. See [docs/MVP2-CAD-CHECKS.md](docs/MVP2-CAD-CHECKS.md).
+
 ## Architecture
 
 ```text

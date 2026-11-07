@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- MVP-2 regulation-to-CAD checks (docs/MVP2-CAD-CHECKS.md):
+  - `archontos.cad.checks` extracts rule DSL facts from `arch_object`: lengths in m, areas in
+    m2, `fact_units`, and provenance by object id and DXF handle.
+  - Binding takes only active rule versions with approved basis that are effective on the
+    reference date and whose jurisdiction covers the run. Land-parcel facts are optional.
+  - Rules are evaluated per object or per drawing and fail closed: a missing fact, a unit
+    mismatch or an unexecutable rule gives REVIEW.
+  - Migration 015 adds `cad_check_run` and `cad_check_result`: append-only, jurisdiction RLS,
+    `archontos_app` SELECT/INSERT only.
+  - New endpoints `POST/GET /v1/cad/revisions/{id}/checks` and `GET .../checks/results`, with
+    filters and cursors.
+  - New permission `cad.check` (curator, reviewer).
+  - New event `CadChecksCompleted` on outbox topic `cad.checks-completed`.
 - MVP-1 DXF/CAD object normalization (docs/MVP1-CAD.md): migration 014 (`cad_artifact`,
   `cad_revision`, `cad_entity`, `arch_object`, `arch_object_source`; append-only triggers,
   jurisdiction RLS, `archontos_app` SELECT/INSERT only); deterministic ezdxf parser (optional
