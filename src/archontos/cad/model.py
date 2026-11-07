@@ -328,6 +328,9 @@ def object_properties(kind: str, element: ModelElement) -> dict[str, Any]:
     if element.footprint and len(element.footprint) >= 3 and kind in ("space", "slab"):
         props.setdefault("area", {"value": _num(_shoelace(element.footprint)), "unit": "m2"})
         props.setdefault("perimeter", {"value": _num(_perimeter(element.footprint)), "unit": "m"})
+    plan_area = element.quantities.get("plan_area")
+    if plan_area is not None and kind in ("space", "slab"):
+        props.setdefault("area", dict(plan_area))
     label = element.name if kind == "space" else None
     if label and label.strip():
         props["name"] = label.strip()

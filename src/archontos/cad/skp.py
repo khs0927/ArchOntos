@@ -175,7 +175,7 @@ def _derived_quantities(dx: float, dy: float, dz: float) -> dict[str, Any]:
         out["depth"] = short_side
         out["thickness"] = short_side
     if dx > 0 and dy > 0:
-        out["area"] = dx * dy
+        out["plan_area"] = dx * dy
     return out
 
 
@@ -189,14 +189,14 @@ def element_from_entity(entity: dict[str, Any], factor: float) -> ModelElement:
 
     quantities: dict[str, dict[str, Any]] = {}
     for name, value in _derived_quantities(dx, dy, dz).items():
-        unit = "m2" if name == "area" else "m"
+        unit = "m2" if name == "plan_area" else "m"
         normalized = normalize_quantity(value, unit)
         if normalized is not None:
             quantities[name] = normalized
     footprint = None
     if entity.get("footprint"):
         footprint = tuple((float(p[0]) * factor, float(p[1]) * factor) for p in entity["footprint"])
-        quantities.pop("area", None)  # the polygon area wins over the bbox rectangle
+        quantities.pop("plan_area", None)  # the polygon area wins over the bbox rectangle
     for name, quantity in (entity.get("quantities") or {}).items():
         unit = quantity["unit"]
         normalized = normalize_quantity(quantity["value"], unit)
