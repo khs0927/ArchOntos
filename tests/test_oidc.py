@@ -179,3 +179,14 @@ def test_http_bearer_roundtrip_and_failures(oidc_app):
     assert bad.status_code == 401 and bad.headers["www-authenticate"] == "Bearer"
     # X-Actor hints are not accepted once OIDC is the authentication method
     assert oidc_app.get("/who", headers={"x-actor": "mallory"}).status_code == 401
+
+
+def test_invalid_bearer_is_counted_and_audited(oidc_app, caplog):
+    from archontos.observability import AUTH_FAILURES  # noqa: PLC0415
+
+    before = AUTH_FAILURES.labels(service="test", reason="invalid_bearer")._value.get()
+    with caplog.at_level("WARNING", logger="archontos.audit"):
+        oidc_app.get("/who", headers={"authorization": "Bearer garbage"})
+    after = AUTH_FAILURES.labels(service="test", reason="invalid_bearer")._value.get()
+    assert after == before + 1
+    assert "garbage" not in caplog.text

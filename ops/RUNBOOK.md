@@ -83,6 +83,24 @@ The proposer of an action cannot approve it, even with `admin` (four-eyes).
   잘못된 Bearer 토큰은 401이며 API 키로 대체 인증하지 않습니다. IdP 키를 가져올 수 없으면 거절(fail-closed).
 - 알 수 없는 `kid`로 JWKS를 다시 가져오는 간격은 30초 이상입니다.
 
+## 메트릭과 구조화 로그 (Metrics and audit logs)
+
+`ARCHONTOS_LOG_FORMAT=json` 이면 로그 한 줄이 JSON 객체 하나입니다 (`ARCHONTOS_LOG_LEVEL`로 수준 조정).
+
+- 요청 로그 (`archontos.request`): `request_id`, `method`, `route`(경로 템플릿, 실제 경로 아님),
+  `status`, `duration_ms`, `actor`, `authenticated`. `X-Request-ID`는 `[A-Za-z0-9._-]{8,64}`일 때만
+  그대로 전파하고, 아니면 새로 생성하며 응답 헤더로 돌려줍니다.
+- 감사 이벤트 (`archontos.audit`, WARNING): `authentication_failed`, `authorization_denied`,
+  `four_eyes_violation` — `actor`, `permission`, `route`, `outcome`, `reason`, `request_id`.
+  DB `audit_log` 테이블과는 별개이며, 로그 수집기(예: Loki)로 보관/알림하세요.
+- `Authorization`/`X-API-Key` 값과 토큰은 어떤 로그에도 기록되지 않습니다.
+- Prometheus (`/metrics`): `archontos_http_request_duration_seconds{service,route,method,status_class}`,
+  `archontos_http_requests_in_flight{service}`,
+  `archontos_auth_failures_total{service,reason}` (reason: missing_key, invalid_key,
+  unauthenticated, forbidden, four_eyes). 모든 라벨은 유한 집합입니다.
+- 알림 예: `rate(archontos_auth_failures_total[5m]) > 1` (무차별 대입/오설정),
+  `histogram_quantile(0.95, sum by (le, service) (rate(archontos_http_request_duration_seconds_bucket[5m])))`.
+
 ## 벡터 인덱스 (HNSW)
 
 - Query time: `ARCHONTOS_HNSW_EF_SEARCH` (raised automatically to cover offset+limit),

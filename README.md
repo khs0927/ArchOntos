@@ -54,6 +54,7 @@ Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; def
   `embedding` NULL. Vectors are L2-normalised, zero-padded to `vector(1536)`, and tagged with
   `embedding_model` (migration 009)
 - optional OIDC bearer auth (`ARCHONTOS_OIDC_*`, see ops/RUNBOOK.md) and API key gate: set `ARCHONTOS_API_KEYS`; `/health` and `/metrics` stay open
+- observability: `ARCHONTOS_LOG_FORMAT=json` request/audit logs, Prometheus latency/auth metrics
 
 Still incomplete:
 

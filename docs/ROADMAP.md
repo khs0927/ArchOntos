@@ -24,7 +24,8 @@
   four-eyes approval, least-privilege DB role, audit_log append-only and jurisdiction RLS
   (ops/RUNBOOK.md). external IdP (OIDC bearer/JWKS) done
 - migration/backup/restore runbook
-- metrics and structured audit logs
+- metrics and structured audit logs — done: JSON logs, request ids, latency/in-flight/auth-failure
+  metrics, audit events (ops/RUNBOOK.md)
 
 ## 후속
 - pgvector — done: embeddings (fastembed/hashing), HNSW, paginated similarity search
