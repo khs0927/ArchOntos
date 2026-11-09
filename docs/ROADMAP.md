@@ -23,7 +23,7 @@
 - API auth/identity propagation — done: named API keys, per-request actor, role-based permissions,
   four-eyes approval, least-privilege DB role, audit_log append-only and jurisdiction RLS
   (ops/RUNBOOK.md). Open: external IdP (OIDC)
-- migration/backup/restore runbook
+- migration/backup/restore runbook — done: ops/BACKUP-RESTORE.md, ops/scripts/, `archontos.ops.verify_restore`
 - metrics and structured audit logs
 
 ## 후속

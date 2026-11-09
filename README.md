@@ -48,7 +48,7 @@ Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; def
   cursor-paginated
 - identity and authorization: named API keys, per-actor roles and four-eyes approval
   (`ARCHONTOS_ACTOR_ROLES`), a least-privilege DB login, append-only `audit_log` and
-  jurisdiction row-level security. See `ops/RUNBOOK.md`
+  jurisdiction row-level security. See `ops/RUNBOOK.md`; backup/restore: `ops/BACKUP-RESTORE.md`
 - embeddings: `ARCHONTOS_EMBEDDER=fastembed` (`pip install 'archontos[embeddings]'`, multilingual
   ONNX model, no torch) or `hashing` (deterministic, dependency-free). Default `none` keeps
   `embedding` NULL. Vectors are L2-normalised, zero-padded to `vector(1536)`, and tagged with

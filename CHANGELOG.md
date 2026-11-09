@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Backup/restore: `ops/BACKUP-RESTORE.md` runbook (RPO/RTO, least-privilege roles, restore drill),
+  `ops/scripts/backup.sh` and `restore_verify.sh` (refuse non-empty targets without a flag), and
+  `python -m archontos.ops.verify_restore` (artifact sha256 vs `artifact` rows, `schema_migrations`
+  checksums, `audit_log` append-only).
 - Least-privilege DB role: migration 012 creates the `archontos_app` group (DML only; on
   `audit_log` only SELECT/INSERT). `python -m archontos.db.roles ensure-login|check` provisions
   and verifies the service login. Compose (`db-login` service), CI (from the built image) and
