@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from sqlalchemy import text
@@ -17,6 +18,12 @@ from archontos.cad.persistence import (
     encode_cursor,
     filter_fingerprint,
 )
+
+
+def _date(value: Any) -> date | None:
+    if value is None or isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
 
 
 class RunNotFound(LookupError):
@@ -157,9 +164,9 @@ class CadIssueRepository:
                         "title": issue["rule_title"],
                         "reason": issue["reason"],
                         "jur": issue["jurisdiction_code"] or run["jurisdiction_code"],
-                        "ref": issue["reference_date"],
-                        "vf": issue["valid_from"],
-                        "vt": issue["valid_to"],
+                        "ref": _date(issue["reference_date"]),
+                        "vf": _date(issue["valid_from"]),
+                        "vt": _date(issue["valid_to"]),
                         "binding": issue["binding"],
                         "evidence": json.dumps(issue["evidence_locator"], ensure_ascii=False),
                         "paths": issue["fact_paths"],
