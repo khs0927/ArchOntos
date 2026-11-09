@@ -89,6 +89,20 @@ jobs:
           ARCHONTOS_EMBEDDING_CACHE_DIR: ${{ github.workspace }}/.fastembed-cache
         run: pytest tests/test_embedder.py
 
+  cad:
+    # Optional extra: ezdxf-backed DXF normalizer tests (skipped in the default job).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: pip install -e '.[dev,cad]'
+      - name: DXF normalizer tests
+        run: pytest tests/test_cad_dxf.py
+
   helm:
     runs-on: ubuntu-latest
     timeout-minutes: 5
