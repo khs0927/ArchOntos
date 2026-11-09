@@ -128,6 +128,12 @@ def normalize_dxf(path: str | Path) -> dict[str, Any]:
         doc = ezdxf.readfile(str(p))
     except Exception as exc:  # noqa: BLE001  # ezdxf raises several unrelated types
         raise DxfError(f"malformed or unsupported DXF: {exc}") from exc
+    try:
+        unchanged = p.read_bytes() == data
+    except OSError as exc:
+        raise DxfError(f"cannot re-read {p}: {exc}") from exc
+    if not unchanged:
+        raise DxfError(f"{p} changed while it was being read; refusing to emit mixed facts")
 
     try:
         code = int(doc.header.get("$INSUNITS", 0))

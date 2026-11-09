@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -64,3 +65,21 @@ def test_input_unchanged(tmp_path):
     normalize_dxf(f)
     assert main([str(f)]) == 0
     assert f.read_bytes() == before and f.stat().st_mtime_ns == mtime
+
+
+def test_file_changed_during_read_is_rejected(tmp_path, monkeypatch):
+    from archontos.cad import dxf as mod
+
+    path = tmp_path / "a.dxf"
+    doc = ezdxf.new()
+    doc.saveas(path)
+    real = ezdxf.readfile
+
+    def racing(name):
+        result = real(name)
+        Path(name).write_bytes(Path(name).read_bytes() + b"\n")
+        return result
+
+    monkeypatch.setattr(ezdxf, "readfile", racing)
+    with pytest.raises(mod.DxfError, match="changed while"):
+        mod.normalize_dxf(path)
