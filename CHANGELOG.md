@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Packaging: the wheel now ships `db/migrations/*.sql` as `archontos._migrations`, and
+  `default_migrations_dir()` falls back to it (`packaged_migrations_dir()`), so a git/wheel install
+  can run `python -m archontos.db.migrate` without a source checkout.
+- Shared-database schema option: `ARCHONTOS_DB_SCHEMA` (settings `db_schema`) puts every
+  ArchOntos table in that PostgreSQL schema (search_path `<schema>, public`, so pgvector types in
+  `public` still resolve); `python -m archontos.db.migrate --schema` creates and migrates it.
+  Upstreamed from the Ontology-platform monorepo, which consumes ArchOntos as a dependency.
 - Least-privilege DB role: migration 012 creates the `archontos_app` group (DML only; on
   `audit_log` only SELECT/INSERT). `python -m archontos.db.roles ensure-login|check` provisions
   and verifies the service login. Compose (`db-login` service), CI (from the built image) and

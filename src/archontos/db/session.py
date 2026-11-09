@@ -43,10 +43,23 @@ def install_session_context(
     )
 
 
+def schema_connect_args(schema: str | None) -> dict[str, Any]:
+    """asyncpg connect_args that put ``schema`` first on the search path (public stays visible)."""
+    if not schema:
+        return {}
+    from archontos.db.migrate import validate_schema_name
+
+    return {"server_settings": {"search_path": f"{validate_schema_name(schema)},public"}}
+
+
 @lru_cache
 def get_engine():
     settings = get_settings()
-    return create_async_engine(settings.database_url, pool_pre_ping=True)
+    return create_async_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        connect_args=schema_connect_args(settings.db_schema),
+    )
 
 
 @lru_cache
