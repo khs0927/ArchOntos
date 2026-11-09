@@ -1,5 +1,10 @@
+import asyncio
+import logging
+import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -28,7 +33,8 @@ from archontos.identity import (
     validate_actor,
 )
 from archontos.ingestion.persistence import CanonicalizationError
-from archontos.observability import REQUEST_COUNT
+from archontos.observability import REQUEST_COUNT, REQUEST_LOGGER, configure_logging
+from archontos.oidc import OidcError, get_verifier
 from archontos.rules.engine import RuleEvaluationError
 
 OPEN_PATHS = {"/health", "/metrics"}
@@ -59,6 +65,35 @@ def resolve_principal(request: Request, keys: dict[str, str]) -> Principal | Non
     except InvalidActor:
         actor = ANONYMOUS
     return Principal(actor=actor, authenticated=False)
+
+
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_request_log = logging.getLogger(REQUEST_LOGGER)
+
+
+async def authenticate(request: Request, keys: dict[str, str]) -> tuple[Principal | None, str]:
+    """Return ``(principal, reason)``; the principal is None when authentication fails.
+
+    A ``Bearer`` token is verified when OIDC is enabled; otherwise (and for ``X-API-Key``) the
+    API-key path decides. With OIDC enabled and no API keys, anonymous access is refused.
+    """
+    verifier = get_verifier()
+    auth = request.headers.get("authorization", "")
+    if verifier is not None and auth[:7].lower() == "bearer ":
+        try:
+            verified = await asyncio.to_thread(verifier.verify, auth[7:].strip())
+        except OidcError as exc:
+            _request_log.warning(
+                "oidc rejected", extra={"event": "auth_failed", "reason": str(exc)}
+            )
+            return None, "invalid bearer token"
+        return verified, "oidc"
+    if keys:
+        principal = resolve_principal(request, keys)
+        return principal, "api-key" if principal else "missing or invalid api key"
+    if verifier is not None:
+        return None, "missing bearer token"
+    return resolve_principal(request, keys), "open"
 
 
 def authorization_enabled() -> bool:
@@ -100,6 +135,7 @@ async def _unprocessable(_request: Request, exc: Exception) -> JSONResponse:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    get_verifier()  # a partial ARCHONTOS_OIDC_* configuration fails here, before serving
     await verify_service_login(settings.database_url, settings.db_privilege_check)
     yield
 
@@ -112,21 +148,49 @@ def create_service(name: str) -> FastAPI:
 
     @app.middleware("http")
     async def _observe(request: Request, call_next):
+        started = time.perf_counter()
+        settings = get_settings()
+        configure_logging(settings.log_format, settings.log_level)
+        supplied = request.headers.get("x-request-id", "")
+        request_id = supplied if _REQUEST_ID_RE.fullmatch(supplied) else uuid4().hex
         keys = api_keys()
+        reason = "open-path"
         if request.url.path in OPEN_PATHS:
             principal: Principal | None = Principal(actor=ANONYMOUS, authenticated=False)
         else:
-            principal = resolve_principal(request, keys)
+            principal, reason = await authenticate(request, keys)
         if principal is None:
             REQUEST_COUNT.labels(service=name, route="unauthorized").inc()
-            return JSONResponse(status_code=401, content={"detail": "missing or invalid api key"})
-        token = set_principal(principal)
-        try:
-            response = await call_next(request)
-        finally:
-            reset_principal(token)
-        REQUEST_COUNT.labels(service=name, route=route_label(request)).inc()
-        response.headers["x-archontos-actor"] = principal.actor
+            response: Response = JSONResponse(status_code=401, content={"detail": reason})
+            if reason == "invalid bearer token" or reason == "missing bearer token":
+                response.headers["www-authenticate"] = "Bearer"
+            actor = ANONYMOUS
+        else:
+            token = set_principal(principal)
+            try:
+                response = await call_next(request)
+            finally:
+                reset_principal(token)
+            actor = principal.actor
+            REQUEST_COUNT.labels(service=name, route=route_label(request)).inc()
+            response.headers["x-archontos-actor"] = actor
+        response.headers["x-request-id"] = request_id
+        if request.url.path not in OPEN_PATHS:
+            _request_log.info(
+                "request",
+                extra={
+                    "event": "http_request",
+                    "service": name,
+                    "request_id": request_id,
+                    "method": request.method,
+                    "route": route_label(request),
+                    "status": response.status_code,
+                    "actor": actor,
+                    "authenticated": principal.authenticated if principal else False,
+                    "auth": reason,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                },
+            )
         return response
 
     @app.get("/health", tags=["system"])

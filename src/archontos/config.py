@@ -33,6 +33,17 @@ class Settings(BaseSettings):
     api_keys: str = ""
     # Empty disables authorization. Otherwise actor:role+role,... (see archontos.authz).
     actor_roles: str = ""
+    # Optional OIDC/JWT identity (RS256). All three of issuer/audience/jwks_url enable it.
+    oidc_issuer: str | None = None
+    oidc_audience: str | None = None
+    oidc_jwks_url: str | None = None
+    oidc_actor_claim: str = "sub"
+    oidc_roles_claim: str = "roles"  # dotted paths allowed, e.g. realm_access.roles
+    oidc_jurisdictions_claim: str = "jurisdictions"
+    oidc_leeway_seconds: int = Field(default=30, ge=0, le=300)
+    # Structured request/audit logging: json (default) | text | off.
+    log_format: Literal["json", "text", "off"] = "json"
+    log_level: str = "INFO"
     # Optional per-actor jurisdictions for row-level security: actor:KR+JP,...
     actor_jurisdictions: str = ""
     # memory keeps the smoke path DB-free. postgres is the canonical action/projection backend.

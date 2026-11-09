@@ -44,6 +44,15 @@ jobs:
         run: mypy
       - name: Test
         run: pytest
+      - name: Backup / restore round trip (pg_dump -> pg_restore -> row counts)
+        run: |
+          # The runner ships client 16; the server is 18 and pg_dump refuses an older client.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc             https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main"             | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-18
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
+          ops/backup-restore-check.sh
       - name: Compile
         run: python -m compileall -q src apps tests
       - name: Build image (non-root) and run the migration runner from it
