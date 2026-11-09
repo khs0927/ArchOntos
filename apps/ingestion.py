@@ -9,15 +9,33 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
 from apps.common import authorization_enabled, create_service, require
+from archontos.actions.gate import ApprovalDenied, assert_can_execute
+from archontos.actions.persistence import PostgresActionStore
+from archontos.actions.service import ProposedAction
 from archontos.authz import AuthorizationError, Permission, authorize
+from archontos.cad.bcf import export_bcf
 from archontos.cad.check_persistence import CadCheckRepository, inputs_digest
 from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_checks
 from archontos.cad.diff import DiffInputError, DiffTolerances
 from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
 from archontos.cad.ifc import parse_ifc
+from archontos.cad.issue_persistence import CadIssueRepository, RunNotFound
 from archontos.cad.links import LinkInputError, ModelLinkRepository
+from archontos.cad.markers import MarkerError, apply_markers_to_dxf, to_power_cad_payload
 from archontos.cad.model import UnsupportedModelFormat, building_facts, detect_source_format
+from archontos.cad.outputs import (
+    MARKER_ACTION_TYPE,
+    DiffNotFound,
+    build_report,
+    find_marker_output,
+    get_output,
+    insert_artifact,
+    marker_plan_for_run,
+    output_id_for,
+    record_output,
+    revision_source_uri,
+)
 from archontos.cad.persistence import (
     CadConflict,
     CadRepository,
@@ -27,10 +45,17 @@ from archontos.cad.persistence import (
     facts_export,
     filter_fingerprint,
 )
+from archontos.cad.report import (
+    REPORT_VERSION,
+    canonical_bytes,
+    content_sha256,
+    render_html,
+    render_json,
+)
 from archontos.cad.skp import parse_skp_json
 from archontos.config import get_settings
 from archontos.db.session import get_session_factory
-from archontos.identity import current_jurisdictions, current_principal
+from archontos.identity import current_actor, current_jurisdictions, current_principal
 from archontos.ingestion.adapters import LawGoKrAdapter, SourceAdapterError
 from archontos.ingestion.contracts import NormalizedLegalVersion
 from archontos.ingestion.persistence import CanonicalizationError, SourceVersionConflict
@@ -582,3 +607,278 @@ async def list_model_links(
     items = rows[:limit]
     nxt = encode_cursor(items[-1]["id"], fp) if len(rows) > limit else None
     return {"items": items, "next_cursor": nxt}
+
+
+# --- MVP-5: issues + BCF 3.0 export -------------------------------------------------------------
+
+_ISSUE_STATUS = r"^(open|resolved|stale)$"
+
+
+@app.post("/v1/cad/checks/{run_id}/issues", dependencies=[require(Permission.CAD_ISSUE)])
+async def derive_cad_issues(run_id: UUID):
+    """Derive (idempotently) one issue per FAIL/REVIEW (rule_version, arch_object) of a run."""
+    async with get_session_factory()() as session, session.begin():
+        try:
+            derived = await CadIssueRepository(session).derive(str(run_id))
+        except RunNotFound as exc:
+            raise HTTPException(status_code=404, detail="check run not found") from exc
+    return {
+        "run_id": str(run_id),
+        "new_issue_count": derived.new_issue_count,
+        "new_status_count": derived.new_status_count,
+        "items": derived.issues,
+    }
+
+
+@app.get("/v1/cad/issues", dependencies=[require(Permission.CAD_READ)])
+async def list_cad_issues(
+    run_id: UUID | None = None,
+    revision_id: UUID | None = None,
+    status: Annotated[str | None, Query(pattern=_ISSUE_STATUS)] = None,
+    outcome: Annotated[str | None, Query(pattern=r"^(FAIL|REVIEW)$")] = None,
+    rule_version_id: UUID | None = None,
+    origin: Annotated[str | None, Query(pattern=r"^(check|regression)$")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    cursor: str | None = None,
+):
+    async with get_session_factory()() as session, session.begin():
+        try:
+            items, nxt = await CadIssueRepository(session).list_issues(
+                run_id=str(run_id) if run_id else None,
+                revision_id=str(revision_id) if revision_id else None,
+                status=status,
+                outcome=outcome,
+                rule_version_id=str(rule_version_id) if rule_version_id else None,
+                origin=origin,
+                limit=limit,
+                cursor=cursor,
+            )
+        except InvalidCadCursor as exc:
+            raise _cad_cursor_error(exc) from exc
+    return {"items": items, "next_cursor": nxt}
+
+
+@app.get("/v1/cad/issues/export.bcf", dependencies=[require(Permission.CAD_READ)])
+async def export_cad_issues_bcf(
+    run_id: UUID | None = None,
+    revision_id: UUID | None = None,
+    status: Annotated[str | None, Query(pattern=_ISSUE_STATUS)] = None,
+):
+    """BCF 3.0 zip of the caller-visible issues of one run or revision (no writes)."""
+    if run_id is None and revision_id is None:
+        raise HTTPException(status_code=422, detail="run_id or revision_id is required")
+    async with get_session_factory()() as session, session.begin():
+        issues = await CadIssueRepository(session).all_issues(
+            run_id=str(run_id) if run_id else None,
+            revision_id=str(revision_id) if revision_id else None,
+            status=status,
+            outcome=None,
+            rule_version_id=None,
+            origin=None,
+        )
+    if not issues:
+        raise HTTPException(status_code=404, detail="no issues")
+    data = export_bcf(issues, project_id=issues[0]["project_id"])
+    name = f"archontos-{run_id or revision_id}.bcf"
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+# --- MVP-5: compliance reports + marker actions (approval gate) ---------------------------------
+
+
+class CadReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    run_id: UUID
+    diff_id: UUID | None = None
+    title: str = Field(default="CAD 법규 검토 보고서", min_length=1, max_length=200)
+    generated_at: datetime | None = None
+
+
+async def _run_or_404(session, run_id: UUID) -> dict:
+    run = await CadCheckRepository(session).get_run(str(run_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail="check run not found")
+    return run
+
+
+@app.post("/v1/cad/reports", status_code=201, dependencies=[require(Permission.CAD_REPORT)])
+async def create_cad_report(payload: CadReportRequest, response: Response):
+    """HTML + JSON compliance report of one run, stored as new artifacts (same content -> 200)."""
+    generated_at = (payload.generated_at or datetime.now(UTC)).isoformat()
+    store = _artifact_store()
+    async with get_session_factory()() as session, session.begin():
+        run = await _run_or_404(session, payload.run_id)
+        try:
+            report = await build_report(
+                session,
+                run,
+                title=payload.title,
+                generated_at=generated_at,
+                diff_id=str(payload.diff_id) if payload.diff_id else None,
+            )
+        except DiffNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        body = canonical_bytes(report)
+        sha = content_sha256(report)
+        json_ref = await store.put_bytes(
+            "cad-report", body, mime="application/json", suffix=".json"
+        )
+        html_ref = await store.put_bytes(
+            "cad-report",
+            render_html(report).encode("utf-8"),
+            mime="text/html; charset=utf-8",
+            suffix=".html",
+        )
+        json_id = await insert_artifact(session, json_ref)
+        html_id = await insert_artifact(session, html_ref)
+        issues = await CadIssueRepository(session).all_issues(
+            run_id=run["id"],
+            revision_id=None,
+            status=None,
+            outcome=None,
+            rule_version_id=None,
+            origin=None,
+        )
+        link, created = await record_output(
+            session,
+            output_id=output_id_for("report", run["id"], sha),
+            kind="report",
+            artifact_id=json_id,
+            run_id=run["id"],
+            revision_id=run["revision_id"],
+            action_id=None,
+            issue_ids=[i["id"] for i in issues],
+            sha256=sha,
+            media_type="application/json",
+            meta={
+                "html_artifact_id": html_id,
+                "html_storage_uri": html_ref.storage_uri,
+                "html_sha256": html_ref.content_hash,
+                "report_version": REPORT_VERSION,
+                "diff_id": str(payload.diff_id) if payload.diff_id else None,
+            },
+            jurisdiction_code=run["jurisdiction_code"],
+            topic="cad.report-generated",
+            event_type="CadReportGenerated",
+        )
+    if not created:
+        response.status_code = 200
+    return {"created": created, "report": link, "content": render_json(report)}
+
+
+@app.get("/v1/cad/reports/{report_id}", dependencies=[require(Permission.CAD_READ)])
+async def get_cad_report(
+    report_id: UUID, format: Annotated[str, Query(pattern=r"^(meta|json|html)$")] = "meta"
+):
+    async with get_session_factory()() as session, session.begin():
+        link = await get_output(session, str(report_id))
+    if link is None or link["kind"] != "report":
+        raise HTTPException(status_code=404, detail="report not found")
+    if format == "meta":
+        return link
+    uri = link["storage_uri"] if format == "json" else link["meta"]["html_storage_uri"]
+    data = await _artifact_store().get_bytes(uri)
+    media = "application/json" if format == "json" else "text/html; charset=utf-8"
+    return Response(content=data, media_type=media)
+
+
+@app.post(
+    "/v1/cad/checks/{run_id}/markers",
+    status_code=201,
+    dependencies=[require(Permission.ACTION_PROPOSE)],
+)
+async def propose_cad_markers(run_id: UUID):
+    """Propose (not execute) drawing open issues as markers onto a NEW DXF copy.
+
+    The proposal goes through the existing gate: ``POST /v1/actions/{id}/approve`` (four-eyes)
+    then ``POST /v1/cad/markers/{id}/execute``.
+    """
+    async with get_session_factory()() as session, session.begin():
+        run = await _run_or_404(session, run_id)
+        revision = await CadRepository(session).get_revision(run["revision_id"])
+        if revision is None:
+            raise HTTPException(status_code=404, detail="CAD revision not found")
+        try:
+            plan, issue_ids = await marker_plan_for_run(session, run, revision)
+        except MarkerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    proposal = ProposedAction(
+        action_type=MARKER_ACTION_TYPE,
+        target_refs=[f"cad_check_run:{run['id']}", f"cad_revision:{run['revision_id']}"],
+        input_payload={
+            "run_id": run["id"],
+            "revision_id": run["revision_id"],
+            "issue_ids": issue_ids,
+            "plan": plan,
+        },
+        proposed_output={
+            "format": "dxf",
+            "status": "proposal",
+            "plan_sha256": plan["sha256"],
+            "marker_count": len(plan["markers"]),
+            "power_cad_payload": to_power_cad_payload(plan),
+        },
+        requires_approval=True,
+    )
+    stored = await PostgresActionStore(get_session_factory()).propose(
+        proposal, created_by=current_actor(default="anonymous")
+    )
+    return stored.as_api()
+
+
+@app.post("/v1/cad/markers/{action_id}/execute", dependencies=[require(Permission.ACTION_EXECUTE)])
+async def execute_cad_markers(action_id: UUID):
+    """Execute an APPROVED marker action: write a new DXF artifact; the original is untouched."""
+    actions = PostgresActionStore(get_session_factory())
+    found = await actions.get(str(action_id))
+    if found is None or found.action_type != MARKER_ACTION_TYPE:
+        raise HTTPException(status_code=404, detail="marker action not found")
+    if found.status != "succeeded":
+        try:
+            assert_can_execute(status=found.status, requires_approval=found.requires_approval)
+        except ApprovalDenied as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    inputs = found.input_payload
+    store = _artifact_store()
+    async with get_session_factory()() as session, session.begin():
+        existing = await find_marker_output(session, str(action_id))
+        if existing is not None:
+            return {"created": False, "output": existing, "action": found.as_api()}
+        run = await _run_or_404(session, UUID(inputs["run_id"]))
+        uri = await revision_source_uri(session, inputs["revision_id"])
+        if uri is None:
+            raise HTTPException(status_code=404, detail="CAD revision not found")
+        original = await store.get_bytes(uri)
+        try:
+            data = apply_markers_to_dxf(original, inputs["plan"])
+        except (CadParseError, CadDependencyError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        ref = await store.put_bytes("cad-markers", data, mime="image/vnd.dxf", suffix=".dxf")
+        art_id = await insert_artifact(session, ref)
+        link, _ = await record_output(
+            session,
+            output_id=output_id_for("markers", str(action_id)),
+            kind="markers",
+            artifact_id=art_id,
+            run_id=run["id"],
+            revision_id=inputs["revision_id"],
+            action_id=str(action_id),
+            issue_ids=list(inputs["issue_ids"]),
+            sha256=ref.content_hash,
+            media_type="image/vnd.dxf",
+            meta={"plan_sha256": inputs["plan"]["sha256"], "source_storage_uri": uri},
+            jurisdiction_code=run["jurisdiction_code"],
+            topic="cad.markers-exported",
+            event_type="CadMarkersExported",
+        )
+    executed = found
+    if found.status != "succeeded":
+        try:
+            executed = await actions.execute(str(action_id), current_actor(default="anonymous"))
+        except ApprovalDenied as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"created": True, "output": link, "action": executed.as_api()}

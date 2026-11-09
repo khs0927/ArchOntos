@@ -130,3 +130,11 @@ MVP-0 release candidate: hardening on top of the entries below.
     appear in revision facts and MVP-2 check runs.
   - New endpoints `POST /v1/models/links` (new permission `cad.link`) and
     `GET /v1/models/links`.
+
+## Unreleased: MVP-5 issues, BCF 3.0, reports, marker actions
+
+- Migration 019: `cad_issue`, `cad_issue_status`, `cad_issue_note`, `cad_issue_artifact`.
+- `POST /v1/cad/checks/{run_id}/issues`, `GET /v1/cad/issues`, `GET /v1/cad/issues/export.bcf`.
+- `POST /v1/cad/reports`, `GET /v1/cad/reports/{id}`; outbox `cad.report-generated`.
+- `POST /v1/cad/checks/{run_id}/markers`, `POST /v1/cad/markers/{id}/execute`; outbox
+  `cad.markers-exported`. Permissions `cad.issue`, `cad.report`.

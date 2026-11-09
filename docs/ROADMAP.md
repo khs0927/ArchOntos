@@ -69,3 +69,9 @@
 - [x] `building.floor_count` / `basement_count` from IFC storeys; MVP-2 checks and MVP-3 diffs on IFC/SKP revisions
 - [x] `/v1/models/links` (auto `shared_ref` by IFC GlobalId, manual links) with `cad.link`
 - [ ] SketchUp Ruby exporter (via the SketchUp MCP), Revit→IFC producer automation, geometry-based IFC↔DXF auto-linking, IfcOpeningElement/IfcRelVoids handling
+
+## MVP-5: issues, BCF, reports, marker actions (in progress)
+
+- MVP-1..4: implemented on their branches; MVP-4 PR open against its base.
+- MVP-5: issues (migration 019), BCF 3.0 export, HTML/JSON report, marker action through the
+  approval gate (new DXF copy). Open: power-cad schema check, notes API, atomic execute.
