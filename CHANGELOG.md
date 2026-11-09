@@ -5,10 +5,16 @@
 
 ## Unreleased
 
+- DXF: read-only deterministic normalizer `python -m archontos.cad.dxf` (optional `cad` extra, ezdxf);
+  units only from `$INSUNITS` (unknown => flagged, never converted), fails closed (docs/CAD-DXF.md).
 - Observability: `ARCHONTOS_LOG_FORMAT=text|json` / `ARCHONTOS_LOG_LEVEL`; per-request log line with
   sanitised `X-Request-ID`; latency histogram, in-flight gauge and auth-failure counter (bounded
   labels); structured audit events for authn/authz denials and four-eyes violations (ops/RUNBOOK.md).
 
+- Backup/restore: `ops/BACKUP-RESTORE.md` runbook (RPO/RTO, least-privilege roles, restore drill),
+  `ops/scripts/backup.sh` and `restore_verify.sh` (refuse non-empty targets without a flag), and
+  `python -m archontos.ops.verify_restore` (artifact sha256 vs `artifact` rows, `schema_migrations`
+  checksums, `audit_log` append-only).
 - Least-privilege DB role: migration 012 creates the `archontos_app` group (DML only; on
   `audit_log` only SELECT/INSERT). `python -m archontos.db.roles ensure-login|check` provisions
   and verifies the service login. Compose (`db-login` service), CI (from the built image) and

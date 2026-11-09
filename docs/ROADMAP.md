@@ -23,13 +23,13 @@
 - API auth/identity propagation — done: named API keys, per-request actor, role-based permissions,
   four-eyes approval, least-privilege DB role, audit_log append-only and jurisdiction RLS
   (ops/RUNBOOK.md). external IdP (OIDC bearer/JWKS) done
-- migration/backup/restore runbook
+- migration/backup/restore runbook — done: ops/BACKUP-RESTORE.md, ops/scripts/, `archontos.ops.verify_restore`
 - metrics and structured audit logs — done: JSON logs, request ids, latency/in-flight/auth-failure
   metrics, audit events (ops/RUNBOOK.md)
 
 ## 후속
 - pgvector — done: embeddings (fastembed/hashing), HNSW, paginated similarity search
-- DXF
+- DXF — MVP-1 read-only normalizer done (`archontos.cad.dxf`, optional `cad` extra, docs/CAD-DXF.md)
 - IFC/BCF
 - impact analysis
 - approved actions — done: proposal → approval gate → execution with audit
