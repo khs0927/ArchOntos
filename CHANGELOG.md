@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- MVP-1 DXF/CAD object normalization (docs/MVP1-CAD.md): migration 014 (`cad_artifact`,
+  `cad_revision`, `cad_entity`, `arch_object`, `arch_object_source`; append-only triggers,
+  jurisdiction RLS, `archontos_app` SELECT/INSERT only); deterministic ezdxf parser (optional
+  `cad` extra, installed in CI and the image); versioned layer/block mapping rules with Korean and
+  AIA layer names; `/v1/cad/artifacts` upload and paginated revision/object/entity/facts reads;
+  permissions `cad.read` (all roles) and `cad.ingest` (curator); `CadRevisionIngested` event on
+  outbox topic `cad.revision-ingested`; artifact stores gain `put_bytes`.
 - Packaging: the wheel now ships `db/migrations/*.sql` as `archontos._migrations`, and
   `default_migrations_dir()` falls back to it (`packaged_migrations_dir()`), so a git/wheel install
   can run `python -m archontos.db.migrate` without a source checkout.

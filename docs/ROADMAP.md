@@ -29,6 +29,14 @@
   request id (`ARCHONTOS_LOG_FORMAT`)
 - 0.1.0-rc1: tag once CI is green on main; open items are listed in README "Still incomplete"
 
+## MVP-1: CAD object normalization (in progress)
+
+- [x] DXF parser (ezdxf, `cad` extra), deterministic ids/hashes, idempotent persistence
+- [x] Migration 014: cad_artifact / cad_revision / cad_entity / arch_object / provenance, append-only, jurisdiction RLS
+- [x] Versioned mapping rules (Korean 벽/문/창/실/계단/기둥 + AIA A-WALL/A-DOOR/...), spaces with m2 area
+- [x] `/v1/cad/*` API with permissions, cursor pagination, outbox events, `aec-facts-export/1` facts
+- [ ] Wall pairing (thickness), door/window host walls, storeys, DWG conversion. See docs/MVP1-CAD.md
+
 ## 후속
 - pgvector — done: embeddings (fastembed/hashing), HNSW, paginated similarity search
 - DXF

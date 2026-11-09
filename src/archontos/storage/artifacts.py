@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 from dataclasses import dataclass
@@ -52,6 +53,29 @@ class LocalArtifactStore:
         return ArtifactRef(
             artifact_type="json",
             mime="application/json",
+            storage_uri=f"local://{relative.as_posix()}",
+            content_hash=digest,
+            byte_size=len(payload),
+        )
+
+    async def put_bytes(
+        self, namespace: str, payload: bytes, *, mime: str, suffix: str
+    ) -> ArtifactRef:
+        """Store raw bytes content-addressed by sha256 (e.g. uploaded DXF drawings)."""
+        digest = hashlib.sha256(payload).hexdigest()
+        relative = Path("raw") / namespace / digest[:2] / f"{digest}{suffix}"
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            if path.read_bytes() != payload:
+                raise RuntimeError(f"content-address collision at {path}")
+        else:
+            temp = path.with_suffix(".tmp")
+            temp.write_bytes(payload)
+            temp.replace(path)
+        return ArtifactRef(
+            artifact_type=suffix.lstrip(".") or "bin",
+            mime=mime,
             storage_uri=f"local://{relative.as_posix()}",
             content_hash=digest,
             byte_size=len(payload),
@@ -127,6 +151,37 @@ class MinioArtifactStore:
 
     async def put_envelope(self, envelope: RawSourceEnvelope) -> ArtifactRef:
         return await asyncio.to_thread(self._put_sync, envelope)
+
+    def _put_bytes_sync(
+        self, namespace: str, payload: bytes, mime: str, suffix: str
+    ) -> ArtifactRef:
+        digest = hashlib.sha256(payload).hexdigest()
+        key = f"raw/{namespace}/{digest[:2]}/{digest}{suffix}"
+        if not self.client.bucket_exists(self.bucket):
+            self.client.make_bucket(self.bucket)
+        try:
+            stat = self.client.stat_object(self.bucket, key)
+            if stat.size != len(payload):
+                raise RuntimeError(f"content-address collision at s3://{self.bucket}/{key}")
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            if code not in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}:
+                raise
+            self.client.put_object(
+                self.bucket, key, io.BytesIO(payload), length=len(payload), content_type=mime
+            )
+        return ArtifactRef(
+            artifact_type=suffix.lstrip(".") or "bin",
+            mime=mime,
+            storage_uri=f"s3://{self.bucket}/{key}",
+            content_hash=digest,
+            byte_size=len(payload),
+        )
+
+    async def put_bytes(
+        self, namespace: str, payload: bytes, *, mime: str, suffix: str
+    ) -> ArtifactRef:
+        return await asyncio.to_thread(self._put_bytes_sync, namespace, payload, mime, suffix)
 
     def _get_json_sync(self, storage_uri: str) -> dict[str, Any]:
         parsed = urlparse(storage_uri)

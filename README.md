@@ -65,6 +65,13 @@ Still incomplete:
   migrations have no down scripts (rollback = restore, see ops/RUNBOOK.md)
 - request/audit logs go to stdout as JSON; shipping, retention and alerting are the platform's job
 
+## MVP-1: CAD objects
+
+Upload a DXF drawing to `POST /v1/cad/artifacts` (ingestion service, `cad.ingest`). The parser
+produces immutable raw entities and walls, doors, windows, spaces (area in m2), stairs and columns,
+each with an `archontos-aec-subject-ref/1` and `fact_units`. Install with `pip install -e '.[cad]'`.
+See [docs/MVP1-CAD.md](docs/MVP1-CAD.md).
+
 ## Architecture
 
 ```text

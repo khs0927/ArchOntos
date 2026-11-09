@@ -10,7 +10,7 @@ COPY src ./src
 COPY apps ./apps
 # db/migrations is package data (archontos._migrations), so it must exist before the build.
 COPY db/migrations ./db/migrations
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir '.[cad]'
 
 # Run as an unprivileged user. The artifact directory is created here so a fresh named volume
 # mounted at /data/artifacts inherits this ownership. A volume created by an older root image
