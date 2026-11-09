@@ -80,6 +80,15 @@ Each result is PASS, FAIL or REVIEW and records the rule version, effective date
 locator, and the offending objects with their DXF handles. Missing facts and unit mismatches
 give REVIEW. See [docs/MVP2-CAD-CHECKS.md](docs/MVP2-CAD-CHECKS.md).
 
+## MVP-3: permit vs construction / revision diff
+
+`POST /v1/cad/diffs` (`cad.diff`) compares two CAD revisions of one drawing lineage, or any two
+explicitly paired ones, and classifies each object as added, removed, modified or unchanged,
+with per-property deltas that carry units. It lists the check results a change affects and
+marks the base revision's results stale. With `rerun_checks` it re-runs the checks on the
+target revision and reports transitions such as PASS to FAIL. See
+[docs/MVP3-REVISION-DIFF.md](docs/MVP3-REVISION-DIFF.md).
+
 ## Architecture
 
 ```text
