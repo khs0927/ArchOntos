@@ -52,9 +52,19 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
 
 
 class AuthorizationError(Exception):
-    def __init__(self, status_code: int, detail: str):
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        *,
+        reason: str = "denied",
+        permission: str | None = None,
+    ):
         self.status_code = status_code
         self.detail = detail
+        # Bounded vocabulary for metrics/audit: unauthenticated | forbidden | four_eyes.
+        self.reason = reason
+        self.permission = permission
         super().__init__(detail)
 
 
@@ -102,11 +112,23 @@ def authorize(principal: Principal | None, permission: Permission, *, enabled: b
     if not enabled:
         return
     if principal is None or not principal.authenticated:
-        raise AuthorizationError(401, "authentication required")
+        raise AuthorizationError(
+            401, "authentication required", reason="unauthenticated", permission=permission.value
+        )
     if permission not in permissions_for(principal.roles):
-        raise AuthorizationError(403, f"{principal.actor!r} lacks permission {permission.value}")
+        raise AuthorizationError(
+            403,
+            f"{principal.actor!r} lacks permission {permission.value}",
+            reason="forbidden",
+            permission=permission.value,
+        )
 
 
 def check_four_eyes(principal: Principal | None, proposer: str, *, enabled: bool) -> None:
     if enabled and principal is not None and principal.actor == proposer:
-        raise AuthorizationError(403, "the proposer of an action cannot approve it")
+        raise AuthorizationError(
+            403,
+            "the proposer of an action cannot approve it",
+            reason="four_eyes",
+            permission=Permission.ACTION_APPROVE.value,
+        )

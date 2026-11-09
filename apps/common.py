@@ -1,3 +1,4 @@
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -28,7 +29,20 @@ from archontos.identity import (
     validate_actor,
 )
 from archontos.ingestion.persistence import CanonicalizationError
-from archontos.observability import REQUEST_COUNT
+from archontos.observability import (
+    REQUEST_COUNT,
+    REQUEST_LATENCY,
+    REQUESTS_IN_FLIGHT,
+    audit_event,
+    configure_logging,
+    log_request,
+    method_label,
+    record_auth_failure,
+    reset_request_id,
+    sanitize_request_id,
+    set_request_id,
+    status_class,
+)
 from archontos.rules.engine import RuleEvaluationError
 
 OPEN_PATHS = {"/health", "/metrics"}
@@ -76,8 +90,19 @@ def require(permission: Permission):
     return Depends(_check)
 
 
-async def _authorization_error(_request: Request, exc: Exception) -> JSONResponse:
+async def _authorization_error(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AuthorizationError)  # noqa: S101 - registered for this type only
+    principal = current_principal()
+    record_auth_failure(request.app.title.removeprefix("ArchOntos "), exc.reason)
+    audit_event(
+        "four_eyes_violation" if exc.reason == "four_eyes" else "authorization_denied",
+        outcome="denied",
+        actor=principal.actor if principal else ANONYMOUS,
+        permission=exc.permission,
+        route=route_label(request),
+        reason=exc.reason,
+        status=exc.status_code,
+    )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
@@ -105,6 +130,8 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_service(name: str) -> FastAPI:
+    settings = get_settings()
+    configure_logging(settings.log_format, settings.log_level)
     app = FastAPI(title=f"ArchOntos {name}", version="0.1.0", lifespan=_lifespan)
     app.add_exception_handler(RuleEvaluationError, _unprocessable)
     app.add_exception_handler(CanonicalizationError, _unprocessable)
@@ -112,22 +139,65 @@ def create_service(name: str) -> FastAPI:
 
     @app.middleware("http")
     async def _observe(request: Request, call_next):
-        keys = api_keys()
-        if request.url.path in OPEN_PATHS:
-            principal: Principal | None = Principal(actor=ANONYMOUS, authenticated=False)
-        else:
-            principal = resolve_principal(request, keys)
-        if principal is None:
-            REQUEST_COUNT.labels(service=name, route="unauthorized").inc()
-            return JSONResponse(status_code=401, content={"detail": "missing or invalid api key"})
-        token = set_principal(principal)
+        started = time.perf_counter()
+        request_id = sanitize_request_id(request.headers.get("x-request-id"))
+        rid_token = set_request_id(request_id)
+        method = method_label(request.method)
+        REQUESTS_IN_FLIGHT.labels(service=name).inc()
+        status = 500
+        principal: Principal | None = None
+        route = "unmatched"
         try:
-            response = await call_next(request)
+            keys = api_keys()
+            if request.url.path in OPEN_PATHS:
+                principal = Principal(actor=ANONYMOUS, authenticated=False)
+            else:
+                principal = resolve_principal(request, keys)
+            if principal is None:
+                route = "unauthorized"
+                reason = "invalid_key" if request.headers.get("x-api-key") else "missing_key"
+                record_auth_failure(name, reason)
+                audit_event(
+                    "authentication_failed",
+                    outcome="denied",
+                    actor=ANONYMOUS,
+                    route=route,
+                    reason=reason,
+                    status=401,
+                )
+                REQUEST_COUNT.labels(service=name, route=route).inc()
+                response: Response = JSONResponse(
+                    status_code=401, content={"detail": "missing or invalid api key"}
+                )
+            else:
+                token = set_principal(principal)
+                try:
+                    response = await call_next(request)
+                finally:
+                    reset_principal(token)
+                route = route_label(request)
+                REQUEST_COUNT.labels(service=name, route=route).inc()
+                response.headers["x-archontos-actor"] = principal.actor
+            status = response.status_code
+            response.headers["x-request-id"] = request_id
+            return response
         finally:
-            reset_principal(token)
-        REQUEST_COUNT.labels(service=name, route=route_label(request)).inc()
-        response.headers["x-archontos-actor"] = principal.actor
-        return response
+            elapsed = time.perf_counter() - started
+            REQUESTS_IN_FLIGHT.labels(service=name).dec()
+            REQUEST_LATENCY.labels(
+                service=name, route=route, method=method, status_class=status_class(status)
+            ).observe(elapsed)
+            log_request(
+                request_id=request_id,
+                service=name,
+                method=method,
+                route=route,
+                status=status,
+                duration_ms=round(elapsed * 1000, 2),
+                actor=principal.actor if principal else ANONYMOUS,
+                authenticated=principal.authenticated if principal else False,
+            )
+            reset_request_id(rid_token)
 
     @app.get("/health", tags=["system"])
     async def health():

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     artifact_local_path: str = "local-data/artifacts"
     allowed_jurisdictions: str = Field(default="KR")
     otel_enabled: bool = False
+    # json emits one JSON object per log line (request + audit events); text is human readable.
+    log_format: Literal["text", "json"] = "text"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     lawgo_oc: str | None = None
     lawgo_base_url: str = "https://www.law.go.kr/DRF"
     # Empty means open, matching local MVP-0. Set a comma-separated list to require X-API-Key.

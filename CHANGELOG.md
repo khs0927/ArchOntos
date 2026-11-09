@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Observability: `ARCHONTOS_LOG_FORMAT=text|json` / `ARCHONTOS_LOG_LEVEL`; per-request log line with
+  sanitised `X-Request-ID`; latency histogram, in-flight gauge and auth-failure counter (bounded
+  labels); structured audit events for authn/authz denials and four-eyes violations (ops/RUNBOOK.md).
+
 - Least-privilege DB role: migration 012 creates the `archontos_app` group (DML only; on
   `audit_log` only SELECT/INSERT). `python -m archontos.db.roles ensure-login|check` provisions
   and verifies the service login. Compose (`db-login` service), CI (from the built image) and
