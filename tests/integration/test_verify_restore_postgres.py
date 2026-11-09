@@ -39,7 +39,7 @@ async def test_run_checks_detects_tampering(mvp0_db, postgres_dsn, tmp_path: Pat
         reader = LocalArtifactReader(tmp_path)
         assert await run_checks(conn, reader, migrations_dir=MIGRATIONS_DIR) == []
 
-        (tmp_path / "raw" / "x.json").write_bytes(b"tampered")
+        (tmp_path / "raw" / "x.json").write_bytes(b"tampered-content")
         findings = await run_checks(conn, reader, migrations_dir=MIGRATIONS_DIR)
         assert [f.check for f in findings] == ["artifact", "artifact"]  # hash and size
     finally:
