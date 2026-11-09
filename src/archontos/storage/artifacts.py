@@ -97,6 +97,18 @@ class LocalArtifactStore:
             raise ArtifactReadError("JSON artifact root must be an object")
         return payload
 
+    async def get_bytes(self, storage_uri: str) -> bytes:
+        if not storage_uri.startswith("local://"):
+            raise ArtifactReadError(f"unsupported local artifact URI: {storage_uri!r}")
+        root = self.root.resolve()
+        path = (self.root / storage_uri.removeprefix("local://")).resolve()
+        if not path.is_relative_to(root):
+            raise ArtifactReadError("artifact path escapes configured local root")
+        try:
+            return path.read_bytes()
+        except OSError as exc:
+            raise ArtifactReadError(f"cannot read artifact: {storage_uri}") from exc
+
 
 class MinioArtifactStore:
     """S3-compatible immutable artifact store backed by MinIO."""
@@ -182,6 +194,21 @@ class MinioArtifactStore:
         self, namespace: str, payload: bytes, *, mime: str, suffix: str
     ) -> ArtifactRef:
         return await asyncio.to_thread(self._put_bytes_sync, namespace, payload, mime, suffix)
+
+    def _get_bytes_sync(self, storage_uri: str) -> bytes:
+        parsed = urlparse(storage_uri)
+        key = parsed.path.lstrip("/")
+        if parsed.scheme != "s3" or parsed.netloc != self.bucket or not key:
+            raise ArtifactReadError("artifact URI is outside the configured MinIO bucket")
+        response = self.client.get_object(self.bucket, key)
+        try:
+            return bytes(response.read())
+        finally:
+            response.close()
+            response.release_conn()
+
+    async def get_bytes(self, storage_uri: str) -> bytes:
+        return await asyncio.to_thread(self._get_bytes_sync, storage_uri)
 
     def _get_json_sync(self, storage_uri: str) -> dict[str, Any]:
         parsed = urlparse(storage_uri)

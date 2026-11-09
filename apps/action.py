@@ -121,4 +121,11 @@ async def reject_action(action_id: str, payload: DecisionRequest):
 
 @app.post("/v1/actions/{action_id}/execute", dependencies=[require(Permission.ACTION_EXECUTE)])
 async def execute_action(action_id: str, payload: DecisionRequest):
+    store = _store()
+    found = await store.get(_normalize_id(store, action_id))
+    if found is not None and found.action_type == "CadMarkersExport":
+        # MVP-5: marker actions write a new DXF; only the CAD endpoint can run them.
+        raise HTTPException(
+            status_code=409, detail="use POST /v1/cad/markers/{id}/execute for marker actions"
+        )
     return await _decide("execute", action_id, _effective_actor(payload.actor))

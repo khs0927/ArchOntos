@@ -188,3 +188,9 @@ give `building.floor_count`. MVP-2 checks and MVP-3 diffs run unchanged on these
 Objects carry source refs (DXF handle, IFC GlobalId, SketchUp persistent_id), and
 `GET/POST /v1/models/links` (`cad.read` / `cad.link`) exposes the links between sources
 (migration 018). See [docs/MVP4-IFC-SKETCHUP.md](docs/MVP4-IFC-SKETCHUP.md).
+
+## MVP-5: issues, BCF 3.0, reports, marker actions
+
+See [docs/MVP5-BCF-REPORTS-ACTIONS.md](docs/MVP5-BCF-REPORTS-ACTIONS.md). Still incomplete for
+MVP-5: power-cad payload keys unverified against the live `cad_create_many` schema; marker
+execute is not atomic with the action status; issue notes have no API; markers are DXF-only.
