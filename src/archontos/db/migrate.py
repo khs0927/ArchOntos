@@ -23,11 +23,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib.util
 import os
 import re
 import sys
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path
 
 import asyncpg
@@ -61,12 +61,17 @@ def packaged_migrations_dir() -> Path | None:
 
     Present in wheel / git installs; returns None when the package data is unavailable.
     """
+    # ``archontos._migrations`` is a namespace package (data only, no __init__), so read its
+    # search locations instead of ``importlib.resources`` (which yields a MultiplexedPath).
     try:
-        root = resources.files("archontos._migrations")
+        spec = importlib.util.find_spec("archontos._migrations")
     except ModuleNotFoundError:
         return None
-    path = Path(str(root))
-    return path if path.is_dir() and any(path.glob("*.sql")) else None
+    for location in (spec.submodule_search_locations or []) if spec else []:
+        path = Path(location)
+        if path.is_dir() and any(path.glob("*.sql")):
+            return path
+    return None
 
 
 def default_migrations_dir() -> Path:
