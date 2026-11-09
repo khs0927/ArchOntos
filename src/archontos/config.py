@@ -14,6 +14,10 @@ class Settings(BaseSettings):
 
     env: str = "dev"
     database_url: str = "postgresql+asyncpg://archontos:archontos@localhost:5432/archontos"
+    # Optional PostgreSQL schema for every ArchOntos table. Set it (e.g. "regulation") when
+    # ArchOntos shares one database with the Sion core tables in "public"; connections then use
+    # search_path "<db_schema>, public" so pgvector types in public still resolve.
+    db_schema: str | None = None
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "archontos"
     minio_secret_key: str = DEV_SECRET_PLACEHOLDER
