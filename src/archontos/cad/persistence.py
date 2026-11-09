@@ -14,6 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from archontos.cad.dxf import CAD_NAMESPACE, ParsedDrawing, sha256_hex, source_id_for, subject_ref
+from archontos.cad.links import record_source_refs
+from archontos.cad.model import building_facts
 from archontos.storage.artifacts import ArtifactRef
 
 
@@ -65,6 +67,7 @@ _REVISION_SELECT = """
     SELECT r.id::text AS id, r.cad_artifact_id::text AS cad_artifact_id, r.revision_label,
            r.parser_revision, r.parser_revision_id, r.units, r.units_assumed, r.dxf_version,
            r.entity_count, r.object_count, r.unmapped_entity_count, r.content_digest,
+           r.source_format, r.model_meta_json AS model_meta,
            r.created_by, r.created_at, a.project_id, a.source_key, a.source_id, a.sha256,
            a.file_name, a.jurisdiction_code, a.artifact_id::text AS artifact_id
       FROM cad_revision r JOIN cad_artifact a ON a.id = r.cad_artifact_id
@@ -134,9 +137,10 @@ class CadRepository:
             text(
                 """
                 INSERT INTO cad_artifact(id, artifact_id, project_id, source_key, source_id,
-                                         sha256, file_name, byte_size, jurisdiction_code)
+                                         sha256, file_name, byte_size, jurisdiction_code,
+                                         source_format)
                 VALUES (CAST(:id AS uuid), :artifact_id, :project_id, :source_key, :source_id,
-                        :sha256, :file_name, :byte_size, :jurisdiction_code)
+                        :sha256, :file_name, :byte_size, :jurisdiction_code, :source_format)
                 ON CONFLICT (id) DO NOTHING
                 """
             ),
@@ -150,6 +154,7 @@ class CadRepository:
                 "file_name": file_name,
                 "byte_size": drawing.byte_size,
                 "jurisdiction_code": jurisdiction_code,
+                "source_format": drawing.source_format,
             },
         )
         visible = (
@@ -168,9 +173,11 @@ class CadRepository:
                 """
                 INSERT INTO cad_revision(id, cad_artifact_id, revision_label, parser_revision,
                     parser_revision_id, rule_set_json, units, units_assumed, dxf_version,
-                    entity_count, object_count, unmapped_entity_count, content_digest)
+                    entity_count, object_count, unmapped_entity_count, content_digest,
+                    source_format, model_meta_json)
                 VALUES (CAST(:id AS uuid), CAST(:art AS uuid), :label, :pr, :prid,
-                    CAST(:rules AS jsonb), :units, :assumed, :ver, :ec, :oc, :uc, :digest)
+                    CAST(:rules AS jsonb), :units, :assumed, :ver, :ec, :oc, :uc, :digest,
+                    :source_format, CAST(:meta AS jsonb))
                 """
             ),
             {
@@ -187,6 +194,8 @@ class CadRepository:
                 "oc": len(drawing.objects),
                 "uc": drawing.unmapped_entity_count,
                 "digest": drawing.content_digest,
+                "source_format": drawing.source_format,
+                "meta": json.dumps(drawing.model_meta, ensure_ascii=False),
             },
         )
         # Entity ids are scoped to the bytes; make them unique per revision row.
@@ -284,6 +293,15 @@ class CadRepository:
                 ),
                 links,
             )
+            await record_source_refs(
+                self.session,
+                drawing=drawing,
+                object_ids=obj_ids,
+                revision_id=rev_id,
+                project_id=project_id,
+                revision_label=revision_label or drawing.sha256[:12],
+                jurisdiction_code=jurisdiction_code,
+            )
 
         payload = {
             "cad_artifact_id": art_id,
@@ -294,6 +312,8 @@ class CadRepository:
             "parser_revision": drawing.parser_revision,
             "object_count": len(drawing.objects),
         }
+        if drawing.source_format != "dxf":
+            payload["source_format"] = drawing.source_format
         event_id = (
             await self.session.execute(
                 text(
@@ -470,19 +490,28 @@ def facts_export(revision: dict[str, Any], objects: list[dict[str, Any]]) -> dic
     fact_units = {f"drawing.{k}": "count" for k in counts}
     fact_units["drawing.space_area_total"] = "m2"
     fact_units["drawing.wall_length_total"] = "m"
+    slabs = sum(1 for o in objects if o["kind"] == "slab")
+    if slabs:
+        drawing["slab_count"] = slabs
+        fact_units["drawing.slab_count"] = "count"
+    facts: dict[str, Any] = {"drawing": drawing}
+    building, building_units = building_facts(revision.get("model_meta"))
+    facts.update(building)
+    fact_units.update(building_units)
+    source_format = revision.get("source_format") or "dxf"
     provenance = {
         path: {
-            "method": "archontos dxf parser",
+            "method": f"archontos {source_format} parser",
             "cad_revision_id": revision["id"],
             "parser_revision": revision["parser_revision"],
-            "coverage": "drawing",
+            "coverage": "model" if path.startswith("building.") else "drawing",
         }
         for path in fact_units
     }
     return {
         "schema": "aec-facts-export/1",
         "project_key": revision["project_id"],
-        "facts": {"drawing": drawing, "fact_units": fact_units},
+        "facts": {**facts, "fact_units": fact_units},
         "provenance": provenance,
         "subjects": [{"kind": o["kind"], "ref": o["subject_ref"]} for o in objects],
     }

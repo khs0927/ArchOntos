@@ -37,6 +37,7 @@ class Permission(StrEnum):
     CAD_INGEST = "cad.ingest"
     CAD_CHECK = "cad.check"
     CAD_DIFF = "cad.diff"
+    CAD_LINK = "cad.link"
 
 
 _VIEWER = frozenset(
@@ -58,6 +59,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
         Permission.CAD_INGEST,
         Permission.CAD_CHECK,
         Permission.CAD_DIFF,
+        Permission.CAD_LINK,
     },
     "reviewer": _VIEWER
     | {

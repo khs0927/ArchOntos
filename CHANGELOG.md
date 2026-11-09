@@ -113,3 +113,20 @@ MVP-0 release candidate: hardening on top of the entries below.
 - P3 canonical query executors 및 5종 query API 구현
 - source_version effective interval/superseded_by 자동 유지 추가
 - 남은 release gate를 PostgreSQL 실제 migration + MVP-0 Golden Scenario E2E로 축소
+
+## Unreleased: MVP-4 IFC / SketchUp mapping
+
+- MVP-4 model import (docs/MVP4-IFC-SKETCHUP.md):
+  - `POST /v1/cad/artifacts` detects and parses IFC (`archontos.cad.ifc`, optional `bim` extra
+    with ifcopenshell) and SketchUp JSON `archontos-skp-export/1` (`archontos.cad.skp`,
+    validated with `jsonschema`, now a core dependency). Binary `.skp` returns 415.
+  - Versioned model mapping rules `model-2026.11` map IFC classes and SketchUp tags or
+    definitions to `arch_object` kinds. The new `slab` kind is added. Quantities from
+    attributes, Qto sets and Psets are normalised to m, m2 and m3 with `fact_units`.
+  - Migration 018 adds `source_format` to `cad_artifact` and `cad_revision`, plus
+    `cad_revision.model_meta_json`, the `slab` kind, `arch_object_source_ref` and
+    `model_object_link` (append-only, jurisdiction RLS).
+  - `building.floor_count`, `basement_count` and `storey_count` come from IFC storeys. They
+    appear in revision facts and MVP-2 check runs.
+  - New endpoints `POST /v1/models/links` (new permission `cad.link`) and
+    `GET /v1/models/links`.

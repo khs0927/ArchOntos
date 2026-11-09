@@ -103,6 +103,9 @@ class ArchObject:
     geometry: dict[str, Any]
     source_handles: tuple[str, ...]
     object_hash: str
+    #: Cross-source identity refs ``(ref_kind, value)``, e.g. ``("ifc_guid", GlobalId)``.
+    #: Empty for DXF objects (persistence records the geometry handle as ``dxf_handle``).
+    source_refs: tuple[tuple[str, str], ...] = ()
 
     def facts(self) -> dict[str, Any]:
         """Numeric properties as rule-engine facts: ``{kind: {name: value}}``."""
@@ -119,7 +122,7 @@ class ParsedDrawing:
     sha256: str
     byte_size: int
     parser_revision: str
-    rule_set: MappingRuleSet
+    rule_set: Any  # MappingRuleSet (DXF) or model.ModelMappingRuleSet (IFC / SketchUp JSON)
     units: str
     units_assumed: bool
     dxf_version: str
@@ -127,6 +130,10 @@ class ParsedDrawing:
     objects: tuple[ArchObject, ...]
     unmapped_entity_count: int
     content_digest: str = field(default="")
+    #: ``dxf`` | ``ifc`` | ``skp_json`` (migration 018 ``cad_revision.source_format``).
+    source_format: str = "dxf"
+    #: Model-level metadata (IFC schema, storeys, units); empty for DXF.
+    model_meta: dict[str, Any] = field(default_factory=dict)
 
 
 def _require_ezdxf() -> Any:

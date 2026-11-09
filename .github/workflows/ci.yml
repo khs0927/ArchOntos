@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install
-        run: pip install -e '.[dev,cad]'
+        run: pip install -e '.[dev,cad,bim]'
       - name: Lint
         run: |
           ruff check .
