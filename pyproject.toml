@@ -49,6 +49,7 @@ packages = [
   "archontos",
   "archontos.actions",
   "archontos.assertions",
+  "archontos.cad",
   "archontos.db",
   "archontos.domain",
   "archontos.graph",
