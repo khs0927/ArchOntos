@@ -44,8 +44,34 @@ dev = [
   "mypy==1.20.2",  # pinned: mypy inference differs between releases
 ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# Explicit package list (tests/test_packaging.py keeps it in sync with src/) so the SQL
+# migrations in db/migrations ship inside the wheel as ``archontos._migrations``: a
+# non-editable install (e.g. ``pip install git+https://github.com/khs0927/ArchOntos@<sha>``)
+# can then migrate without a source checkout.
+[tool.setuptools]
+packages = [
+  "archontos",
+  "archontos.actions",
+  "archontos.assertions",
+  "archontos.db",
+  "archontos.domain",
+  "archontos.graph",
+  "archontos.ingestion",
+  "archontos.integration",
+  "archontos.normalization",
+  "archontos.projection",
+  "archontos.query",
+  "archontos.rules",
+  "archontos.storage",
+  "archontos._migrations",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+"archontos._migrations" = "db/migrations"
+
+[tool.setuptools.package-data]
+"archontos._migrations" = ["*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

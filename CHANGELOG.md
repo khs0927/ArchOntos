@@ -36,6 +36,13 @@
   AIA layer names; `/v1/cad/artifacts` upload and paginated revision/object/entity/facts reads;
   permissions `cad.read` (all roles) and `cad.ingest` (curator); `CadRevisionIngested` event on
   outbox topic `cad.revision-ingested`; artifact stores gain `put_bytes`.
+- Packaging: the wheel now ships `db/migrations/*.sql` as `archontos._migrations`, and
+  `default_migrations_dir()` falls back to it (`packaged_migrations_dir()`), so a git/wheel install
+  can run `python -m archontos.db.migrate` without a source checkout.
+- Shared-database schema option: `ARCHONTOS_DB_SCHEMA` (settings `db_schema`) puts every
+  ArchOntos table in that PostgreSQL schema (search_path `<schema>, public`, so pgvector types in
+  `public` still resolve); `python -m archontos.db.migrate --schema` creates and migrates it.
+  Upstreamed from the Ontology-platform monorepo, which consumes ArchOntos as a dependency.
 
 ## 0.1.0-rc1
 
