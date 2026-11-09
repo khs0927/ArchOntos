@@ -38,6 +38,8 @@ class Permission(StrEnum):
     CAD_CHECK = "cad.check"
     CAD_DIFF = "cad.diff"
     CAD_LINK = "cad.link"
+    CAD_ISSUE = "cad.issue"
+    CAD_REPORT = "cad.report"
 
 
 _VIEWER = frozenset(
@@ -60,6 +62,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
         Permission.CAD_CHECK,
         Permission.CAD_DIFF,
         Permission.CAD_LINK,
+        Permission.CAD_ISSUE,
+        Permission.CAD_REPORT,
     },
     "reviewer": _VIEWER
     | {
@@ -67,6 +71,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[Permission]] = {
         Permission.RULE_COMPILE,
         Permission.CAD_CHECK,
         Permission.CAD_DIFF,
+        Permission.CAD_ISSUE,
+        Permission.CAD_REPORT,
     },
     "admin": frozenset(Permission),
 }

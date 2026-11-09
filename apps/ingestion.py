@@ -10,12 +10,14 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.common import authorization_enabled, create_service, require
 from archontos.authz import AuthorizationError, Permission, authorize
+from archontos.cad.bcf import export_bcf
 from archontos.cad.check_persistence import CadCheckRepository, inputs_digest
 from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_checks
 from archontos.cad.diff import DiffInputError, DiffTolerances
 from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
 from archontos.cad.ifc import parse_ifc
+from archontos.cad.issue_persistence import CadIssueRepository, RunNotFound
 from archontos.cad.links import LinkInputError, ModelLinkRepository
 from archontos.cad.model import UnsupportedModelFormat, building_facts, detect_source_format
 from archontos.cad.persistence import (
@@ -582,3 +584,81 @@ async def list_model_links(
     items = rows[:limit]
     nxt = encode_cursor(items[-1]["id"], fp) if len(rows) > limit else None
     return {"items": items, "next_cursor": nxt}
+
+
+# --- MVP-5: issues + BCF 3.0 export -------------------------------------------------------------
+
+_ISSUE_STATUS = r"^(open|resolved|stale)$"
+
+
+@app.post("/v1/cad/checks/{run_id}/issues", dependencies=[require(Permission.CAD_ISSUE)])
+async def derive_cad_issues(run_id: UUID):
+    """Derive (idempotently) one issue per FAIL/REVIEW (rule_version, arch_object) of a run."""
+    async with get_session_factory()() as session, session.begin():
+        try:
+            derived = await CadIssueRepository(session).derive(str(run_id))
+        except RunNotFound as exc:
+            raise HTTPException(status_code=404, detail="check run not found") from exc
+    return {
+        "run_id": str(run_id),
+        "new_issue_count": derived.new_issue_count,
+        "new_status_count": derived.new_status_count,
+        "items": derived.issues,
+    }
+
+
+@app.get("/v1/cad/issues", dependencies=[require(Permission.CAD_READ)])
+async def list_cad_issues(
+    run_id: UUID | None = None,
+    revision_id: UUID | None = None,
+    status: Annotated[str | None, Query(pattern=_ISSUE_STATUS)] = None,
+    outcome: Annotated[str | None, Query(pattern=r"^(FAIL|REVIEW)$")] = None,
+    rule_version_id: UUID | None = None,
+    origin: Annotated[str | None, Query(pattern=r"^(check|regression)$")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    cursor: str | None = None,
+):
+    async with get_session_factory()() as session, session.begin():
+        try:
+            items, nxt = await CadIssueRepository(session).list_issues(
+                run_id=str(run_id) if run_id else None,
+                revision_id=str(revision_id) if revision_id else None,
+                status=status,
+                outcome=outcome,
+                rule_version_id=str(rule_version_id) if rule_version_id else None,
+                origin=origin,
+                limit=limit,
+                cursor=cursor,
+            )
+        except InvalidCadCursor as exc:
+            raise _cad_cursor_error(exc) from exc
+    return {"items": items, "next_cursor": nxt}
+
+
+@app.get("/v1/cad/issues/export.bcf", dependencies=[require(Permission.CAD_READ)])
+async def export_cad_issues_bcf(
+    run_id: UUID | None = None,
+    revision_id: UUID | None = None,
+    status: Annotated[str | None, Query(pattern=_ISSUE_STATUS)] = None,
+):
+    """BCF 3.0 zip of the caller-visible issues of one run or revision (no writes)."""
+    if run_id is None and revision_id is None:
+        raise HTTPException(status_code=422, detail="run_id or revision_id is required")
+    async with get_session_factory()() as session, session.begin():
+        issues = await CadIssueRepository(session).all_issues(
+            run_id=str(run_id) if run_id else None,
+            revision_id=str(revision_id) if revision_id else None,
+            status=status,
+            outcome=None,
+            rule_version_id=None,
+            origin=None,
+        )
+    if not issues:
+        raise HTTPException(status_code=404, detail="no issues")
+    data = export_bcf(issues, project_id=issues[0]["project_id"])
+    name = f"archontos-{run_id or revision_id}.bcf"
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
