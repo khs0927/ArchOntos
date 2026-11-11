@@ -75,3 +75,6 @@
 - MVP-1..4: implemented on their branches; MVP-4 PR open against its base.
 - MVP-5: issues (migration 019), BCF 3.0 export, HTML/JSON report, marker action through the
   approval gate (new DXF copy). Open: power-cad schema check, notes API, atomic execute.
+
+남은 작업의 우선순위 목록은 [TODO.md](TODO.md)를 기준으로 관리한다.
+
