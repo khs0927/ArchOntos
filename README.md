@@ -55,7 +55,7 @@ Filled in this pass (PostgreSQL path is `ARCHONTOS_ACTION_BACKEND=postgres`; def
   `embedding_model` (migration 009)
 - optional API key gate: set `ARCHONTOS_API_KEYS`; `/health` and `/metrics` stay open
 
-Still incomplete:
+Still incomplete (the full, prioritized list lives in [docs/TODO.md](docs/TODO.md)):
 
 - Helm has a ServiceAccount, NetworkPolicy (set `networkPolicy.extraEgress` for the database)
   and optional per-service HPA (`autoscaling.enabled`); no GitOps reconciliation yet
