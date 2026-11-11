@@ -137,6 +137,7 @@ class CadDiffRepository:
                         facts=facts,
                         fact_units=units,
                         rule_version_ids=rule_ids,
+                        model_meta=target.get("model_meta"),
                     )
                 except CadCheckInputError as exc:
                     raise DiffInputError(f"cannot re-run checks: {exc}") from exc

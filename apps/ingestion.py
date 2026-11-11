@@ -390,7 +390,7 @@ async def run_cad_checks(revision_id: UUID, payload: CadCheckRequest, response: 
         try:
             run = run_checks(
                 rules,
-                extract_fact_space(objects),
+                extract_fact_space(objects, model_meta=revision.get("model_meta")),
                 jurisdiction=payload.jurisdiction_code,
                 reference_date=reference_date,
                 land_parcel=payload.land_parcel,

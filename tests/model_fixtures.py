@@ -174,6 +174,25 @@ def tiny_ifc(*, door_width_mm: float = 900.0) -> bytes:
         "Qto_WallBaseQuantities",
         [length("Length", 6000.0), length("Width", 200.0), length("Height", 2700.0)],
     )
+    # door fills an opening that voids the wall (IfcRelFillsElement / IfcRelVoidsElement)
+    opening = e(
+        "IfcOpeningElement",
+        GlobalId=gid("opening"),
+        Name="O1",
+        ObjectPlacement=placement(500, 0, 0, first_pl),
+    )
+    e(
+        "IfcRelVoidsElement",
+        GlobalId=gid("rv"),
+        RelatingBuildingElement=wall,
+        RelatedOpeningElement=opening,
+    )
+    e(
+        "IfcRelFillsElement",
+        GlobalId=gid("rf"),
+        RelatingOpeningElement=opening,
+        RelatedBuildingElement=door,
+    )
     slab = e(
         "IfcSlab", GlobalId=gid("slab"), Name="S1", ObjectPlacement=placement(0, 0, 0, first_pl)
     )

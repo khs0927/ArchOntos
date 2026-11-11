@@ -22,7 +22,7 @@ from archontos.cad.model import (
     build_model_drawing,
 )
 
-IFC_PARSER_VERSION = "ifc-1.0"
+IFC_PARSER_VERSION = "ifc-1.1"  # 1.1: door/window host_ref
 
 #: IFC SI prefixes -> factor.
 SI_PREFIXES: dict[str | None, float] = {
@@ -305,6 +305,19 @@ def _footprint(element: Any, scale: float) -> tuple[tuple[float, float], ...] | 
     return None
 
 
+def host_refs(item: Any) -> list[str]:
+    """GlobalIds of the elements a door/window fills: IfcRelFillsElement -> opening ->
+    IfcRelVoidsElement -> host (wall). Sorted, without duplicates."""
+    hosts: set[str] = set()
+    for fills in getattr(item, "FillsVoids", None) or ():
+        opening = fills.RelatingOpeningElement
+        for voids in getattr(opening, "VoidsElements", None) or ():
+            host = voids.RelatingBuildingElement
+            if host is not None and getattr(host, "GlobalId", None):
+                hosts.add(str(host.GlobalId))
+    return sorted(hosts)
+
+
 def _element(item: Any, scales: dict[int, float], storey_names: dict[int, str]) -> ModelElement:
     import ifcopenshell.util.element as eu
 
@@ -334,6 +347,13 @@ def _element(item: Any, scales: dict[int, float], storey_names: dict[int, str]) 
         location = (float(m[0][3]) * scales[1], float(m[1][3]) * scales[1])
     footprint = _footprint(item, scales[1]) if family in ("space", "slab") else None
     name = (getattr(item, "LongName", None) or item.Name) if family == "space" else item.Name
+    attributes: dict[str, Any] = {}
+    if family in ("door", "window"):
+        hosts = host_refs(item)
+        if len(hosts) == 1:
+            attributes["host_ref"] = hosts[0]
+        elif hosts:
+            attributes["host_ref"] = hosts
     xs = [p[0] for p in footprint] if footprint else []
     ys = [p[1] for p in footprint] if footprint else []
     return ModelElement(
@@ -349,6 +369,7 @@ def _element(item: Any, scales: dict[int, float], storey_names: dict[int, str]) 
         footprint=footprint,
         bbox=(min(xs), min(ys), max(xs), max(ys)) if footprint else None,
         refs=(("ifc_guid", str(item.GlobalId)),),
+        attributes=attributes,
     )
 
 

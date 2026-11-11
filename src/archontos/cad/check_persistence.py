@@ -215,6 +215,7 @@ class CadCheckRepository:
         facts: dict[str, Any],
         fact_units: dict[str, str],
         rule_version_ids: list[str] | None,
+        model_meta: dict[str, Any] | None = None,
     ) -> tuple[PersistedCheckRun, CheckRun]:
         """Bind rules, run them on ``objects`` and persist (idempotent). May raise
         ``CadCheckInputError``."""
@@ -223,7 +224,7 @@ class CadCheckRepository:
         )
         run = run_checks(
             rules,
-            extract_fact_space(objects),
+            extract_fact_space(objects, model_meta=model_meta),
             jurisdiction=jurisdiction_code,
             reference_date=reference_date,
             land_parcel=land_parcel,
