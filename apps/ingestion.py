@@ -524,7 +524,7 @@ async def get_cad_diff(diff_id: UUID):
 async def list_cad_diff_changes(
     diff_id: UUID,
     change_type: Annotated[
-        str | None, Query(pattern=r"^(added|removed|modified|unchanged)$")
+        str | None, Query(pattern=r"^(added|removed|modified|unchanged|split|merged)$")
     ] = None,
     kind: Annotated[
         str | None, Query(pattern=r"^(wall|door|window|space|stair|column|opening)$")

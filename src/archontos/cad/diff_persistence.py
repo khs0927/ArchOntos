@@ -55,7 +55,8 @@ _DIFF_SELECT = """
            d.target_revision_id::text AS target_revision_id, d.relation, d.jurisdiction_code,
            d.tolerances_json AS tolerances, d.rerun_checks, d.differ_version,
            d.base_object_count, d.target_object_count, d.added_count, d.removed_count,
-           d.modified_count, d.unchanged_count, d.summary_json AS summary,
+           d.modified_count, d.unchanged_count, d.split_count, d.merged_count,
+           d.summary_json AS summary,
            d.transitions_json AS transitions, d.stale_json AS stale, d.created_by, d.created_at
       FROM cad_revision_diff d
 """
@@ -164,7 +165,13 @@ class CadDiffRepository:
             )
 
         summary = summarize(changes, len(base_objects), len(target_objects))
-        changed = summary["added"] + summary["removed"] + summary["modified"]
+        changed = (
+            summary["added"]
+            + summary["removed"]
+            + summary["modified"]
+            + summary["split"]
+            + summary["merged"]
+        )
         stale_results = sorted({ref["result_id"] for c in changes for ref in c["impact"]["base"]})
         stale = {
             "base_check_run_ids": [r["id"] for r in base_runs],
@@ -198,11 +205,11 @@ class CadDiffRepository:
                 INSERT INTO cad_revision_diff(id, base_revision_id, target_revision_id, relation,
                     jurisdiction_code, tolerances_json, tolerances_digest, rerun_checks,
                     differ_version, base_object_count, target_object_count, added_count,
-                    removed_count, modified_count, unchanged_count, summary_json,
-                    transitions_json, stale_json)
+                    removed_count, modified_count, unchanged_count, split_count,
+                    merged_count, summary_json, transitions_json, stale_json)
                 VALUES (CAST(:id AS uuid), CAST(:base AS uuid), CAST(:target AS uuid), :rel,
                     :jur, CAST(:tol AS jsonb), :tdigest, :rerun, :ver, :bc, :tc, :ac, :rc,
-                    :mc, :uc, CAST(:summary AS jsonb), CAST(:trans AS jsonb),
+                    :mc, :uc, :sc, :gc, CAST(:summary AS jsonb), CAST(:trans AS jsonb),
                     CAST(:stale AS jsonb))
                 """
             ),
@@ -222,6 +229,8 @@ class CadDiffRepository:
                 "rc": summary["removed"],
                 "mc": summary["modified"],
                 "uc": summary["unchanged"],
+                "sc": summary["split"],
+                "gc": summary["merged"],
                 "summary": json.dumps(summary, ensure_ascii=False),
                 "trans": json.dumps(trans, ensure_ascii=False),
                 "stale": json.dumps(stale, ensure_ascii=False),
@@ -233,10 +242,12 @@ class CadDiffRepository:
                     """
                     INSERT INTO cad_object_change(id, diff_id, change_type, kind,
                         base_object_id, target_object_id, match_method, match_score, label,
-                        base_handles, target_handles, deltas_json, impact_json)
+                        base_handles, target_handles, deltas_json, impact_json,
+                        lineage_json)
                     VALUES (CAST(:id AS uuid), CAST(:diff AS uuid), :ct, :kind,
                         CAST(:bo AS uuid), CAST(:to AS uuid), :method, :score, :label,
-                        :bh, :th, CAST(:deltas AS jsonb), CAST(:impact AS jsonb))
+                        :bh, :th, CAST(:deltas AS jsonb), CAST(:impact AS jsonb),
+                        CAST(:lineage AS jsonb))
                     """
                 ),
                 [
@@ -254,6 +265,7 @@ class CadDiffRepository:
                         "th": c["target_handles"],
                         "deltas": json.dumps(c["deltas"], ensure_ascii=False),
                         "impact": json.dumps(c["impact"], ensure_ascii=False),
+                        "lineage": json.dumps(c.get("lineage") or {}, ensure_ascii=False),
                     }
                     for c in changes
                 ],
@@ -269,6 +281,8 @@ class CadDiffRepository:
             "removed": summary["removed"],
             "modified": summary["modified"],
             "unchanged": summary["unchanged"],
+            "split": summary["split"],
+            "merged": summary["merged"],
             "regressions": summary["transition_counts"]["regressions"],
         }
         event_id: Any = (
@@ -326,7 +340,8 @@ class CadDiffRepository:
                            c.base_object_id::text AS base_object_id,
                            c.target_object_id::text AS target_object_id, c.match_method,
                            c.match_score, c.label, c.base_handles, c.target_handles,
-                           c.deltas_json AS deltas, c.impact_json AS impact
+                           c.deltas_json AS deltas, c.impact_json AS impact,
+                           c.lineage_json AS lineage
                       FROM cad_object_change c
                       JOIN cad_revision_diff d ON d.id = c.diff_id
                      WHERE c.diff_id = CAST(:diff AS uuid)
