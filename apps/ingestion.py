@@ -20,6 +20,7 @@ from archontos.cad.diff import DiffInputError, DiffTolerances
 from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
 from archontos.cad.ifc import parse_ifc
+from archontos.cad.issue_notes import CadIssueNoteRepository, IssueNotFound
 from archontos.cad.issue_persistence import CadIssueRepository, RunNotFound
 from archontos.cad.links import LinkInputError, ModelLinkRepository
 from archontos.cad.markers import MarkerError, apply_markers_to_dxf, to_power_cad_payload
@@ -685,6 +686,45 @@ async def export_cad_issues_bcf(
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
+
+
+class CadIssueNoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    body: str = Field(min_length=1, max_length=4000)
+
+
+@app.post(
+    "/v1/cad/issues/{issue_id}/notes",
+    status_code=201,
+    dependencies=[require(Permission.CAD_NOTE)],
+)
+async def add_cad_issue_note(issue_id: UUID, payload: CadIssueNoteRequest):
+    """Append a note to an issue; the author is the request actor (notes are never edited)."""
+    if not payload.body.strip():
+        raise HTTPException(status_code=422, detail="body must not be blank")
+    async with get_session_factory()() as session, session.begin():
+        try:
+            return await CadIssueNoteRepository(session).add(str(issue_id), payload.body)
+        except IssueNotFound as exc:
+            raise HTTPException(status_code=404, detail="issue not found") from exc
+
+
+@app.get("/v1/cad/issues/{issue_id}/notes", dependencies=[require(Permission.CAD_READ)])
+async def list_cad_issue_notes(
+    issue_id: UUID,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    cursor: str | None = None,
+):
+    async with get_session_factory()() as session, session.begin():
+        try:
+            items, nxt = await CadIssueNoteRepository(session).list(
+                str(issue_id), limit=limit, cursor=cursor
+            )
+        except IssueNotFound as exc:
+            raise HTTPException(status_code=404, detail="issue not found") from exc
+        except InvalidCadCursor as exc:
+            raise _cad_cursor_error(exc) from exc
+    return {"items": items, "next_cursor": nxt}
 
 
 # --- MVP-5: compliance reports + marker actions (approval gate) ---------------------------------

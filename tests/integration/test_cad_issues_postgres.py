@@ -126,3 +126,42 @@ async def test_issues_derive_status_and_bcf(client, monkeypatch):  # noqa: F811
     assert (await http.get("/v1/cad/issues", params={"run_id": built_run})).json()["items"] == []
     hidden = await http.get("/v1/cad/issues/export.bcf", params={"run_id": built_run})
     assert hidden.status_code == 404
+
+
+async def test_issue_notes_append_only_and_paged(client):  # noqa: F811
+    http, factory, store = client
+    built = await _upload(http, revision_plan(corridor_width=900), "A-502")
+    await _active_rules(factory, store, [RULE])
+    run = await _check(http, built)
+    issue = (await http.post(f"/v1/cad/checks/{run}/issues")).json()["items"][0]["id"]
+    for n in range(3):
+        res = await http.post(f"/v1/cad/issues/{issue}/notes", json={"body": f"메모 {n}"})
+        assert res.status_code == 201, res.text
+        assert res.json()["kind"] == "note" and res.json()["created_by"]
+    seen, cursor = [], None
+    for _ in range(10):
+        page = (
+            await http.get(
+                f"/v1/cad/issues/{issue}/notes",
+                params={"limit": 2, **({"cursor": cursor} if cursor else {})},
+            )
+        ).json()
+        seen += [n["body"] for n in page["items"]]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == ["메모 0", "메모 1", "메모 2"]
+    assert (
+        await http.get(f"/v1/cad/issues/{issue}/notes", params={"cursor": "x"})
+    ).status_code == 400
+    blank = await http.post(f"/v1/cad/issues/{issue}/notes", json={"body": "   "})
+    assert blank.status_code == 422
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert (
+        await http.post(f"/v1/cad/issues/{missing}/notes", json={"body": "x"})
+    ).status_code == 404
+    assert await count_rows(factory, "audit_log", "action = 'cad.issue.note'") == 3
+    async with factory() as session:
+        with pytest.raises(DBAPIError):
+            async with session.begin():
+                await session.execute(text("UPDATE cad_issue_note SET body = 'x'"))
