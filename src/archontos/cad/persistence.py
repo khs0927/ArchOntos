@@ -496,17 +496,20 @@ def facts_export(revision: dict[str, Any], objects: list[dict[str, Any]]) -> dic
         fact_units["drawing.slab_count"] = "count"
     facts: dict[str, Any] = {"drawing": drawing}
     building, building_units = building_facts(revision.get("model_meta"))
-    facts.update(building)
+    for group, values in building.items():
+        facts.setdefault(group, {}).update(values)
     fact_units.update(building_units)
     source_format = revision.get("source_format") or "dxf"
+    building_paths = [f"{g}.{k}" for g, vals in building.items() for k in vals]
+    coverage_of_building = "title_block" if source_format == "dxf" else "model"
     provenance = {
         path: {
             "method": f"archontos {source_format} parser",
             "cad_revision_id": revision["id"],
             "parser_revision": revision["parser_revision"],
-            "coverage": "model" if path.startswith("building.") else "drawing",
+            "coverage": coverage_of_building if path in building_paths else "drawing",
         }
-        for path in fact_units
+        for path in sorted({*fact_units, *building_paths})
     }
     return {
         "schema": "aec-facts-export/1",

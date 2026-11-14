@@ -66,6 +66,25 @@ Custom rule sets go through `rule_set_from_dict` and are validated: kinds, regex
 and a version string. The version is part of `parser_revision`, so changing a rule produces a
 new revision. Existing objects are never rewritten.
 
+## Title-block facts (`archontos.cad.building_info`, default version `kr-titleblock-2026.11`)
+
+`parse_dxf(..., building_rules=DEFAULT_BUILDING_RULES)` also reads the title block (도곽):
+
+| Fact | INSERT attribute tag (any layer) | TEXT/MTEXT on `A-ANNO-TTLB`, `A-TTLB`, `TITLE`, `TTLB`, `TB`, `도곽`, `표제` |
+|---|---|---|
+| `building.use_group` | `USE`, `BLDG_USE`, `USE_GROUP`, `MAIN_USE`, `용도`, `주용도`, `건축물용도` | `주용도: 업무시설` |
+| `building.floor_count` (count) | `FLOORS`, `FLOOR_COUNT`, `STOREYS`, `층수`, `지상층수`, ... | `지상 12층` |
+| `building.basement_count` (count) | `BASEMENTS`, `지하층수`, ... (`없음` -> 0) | `지하 2층` |
+| `sheet.storey_label` | `LEVEL`, `STOREY_NAME`, `FLOOR_NAME`, `해당층`, `층명` | `3층 평면도` -> `3층` |
+
+The result is stored as `model_meta_json.building_info` (`rule_set_version`, `values`,
+`sources` = handles / `handle:TAG`, `conflicts`) only when something was found, so drawings
+without a title block keep their content digest. **Fail-closed**: no source -> no fact; two
+sources with different values -> no fact plus a `conflicts` entry. A missing fact makes rules
+that need it REVIEW. The facts appear in `GET .../facts` (provenance coverage `title_block`) and
+in check runs; a caller that also sends `facts.building` / `facts.sheet` for such a revision
+gets 422. Custom rules: `building_rule_set_from_dict` (each text pattern needs a named group `v`).
+
 ## Ontology contract
 
 Each object stores an `archontos-aec-subject-ref/1` (validated by `AecSubjectRef`):

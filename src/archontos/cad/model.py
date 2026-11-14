@@ -498,7 +498,10 @@ def building_facts(model_meta: dict[str, Any] | None) -> tuple[dict[str, Any], d
     """
     storeys = (model_meta or {}).get("storeys")
     if not isinstance(storeys, list) or not storeys:
-        return {}, {}
+        # DXF: title-block values (building_info.py); fail-closed, missing -> no fact.
+        from archontos.cad.building_info import building_info_facts
+
+        return building_info_facts((model_meta or {}).get("building_info"))
     basements = sum(
         1
         for s in storeys

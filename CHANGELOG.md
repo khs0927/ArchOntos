@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- P2 remaining items:
+  - DXF title-block facts (`archontos.cad.building_info`, rules `kr-titleblock-2026.11`):
+    `building.use_group`, `building.floor_count`, `building.basement_count` and
+    `sheet.storey_label` from INSERT attributes or TEXT/MTEXT on title-block layers; stored in
+    `model_meta_json.building_info`; fail-closed on missing or conflicting values.
+
 - P0 real-data verification:
   - Local PostgreSQL integration run (pgvector/pgvector:pg18, throwaway container): full suite
     444 passed, 1 skipped (2026-11-14, DESKTOP-KTQHS1I).

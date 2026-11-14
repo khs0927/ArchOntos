@@ -387,10 +387,13 @@ async def run_cad_checks(revision_id: UUID, payload: CadCheckRequest, response: 
         extra_facts = dict(payload.facts or {})
         extra_units = dict(payload.fact_units or {})
         if model_facts:
-            if "building" in extra_facts:
-                raise HTTPException(
-                    status_code=422, detail="facts.building is derived from the model storeys"
-                )
+            # DXF title blocks (P2) give building.* / sheet.*, IFC storeys building.*.
+            for group in model_facts:
+                if group in extra_facts:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"facts.{group} is derived from the model / title block",
+                    )
             extra_facts.update(model_facts)
             extra_units.update(model_units)
         try:
