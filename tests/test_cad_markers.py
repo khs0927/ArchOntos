@@ -96,12 +96,46 @@ def test_power_cad_payload_shape() -> None:
     plan = build_marker_plan(_issues())
     payload = to_power_cad_payload(plan)
     assert payload["layers"] == [{"name": MARKER_LAYER, "color": 7}]
-    items = payload["items"]
+    assert payload["xdata_app"] == "ARCHONTOS"
+    assert "items" not in payload
+    items = payload["entities"]
     assert [i["type"] for i in items] == ["circle", "line", "mtext"] * 2
     assert all(i["layer"] == MARKER_LAYER for i in items)
     assert items[0]["color"] == 1 and items[3]["color"] == 2
     assert items[2]["text"] == "[FAIL] KR-CORRIDOR: corridor 1.1 m < 1.2 m"
-    assert items[0]["xdata"] == {"app": "ARCHONTOS", "issue_id": "a-1", "outcome": "FAIL"}
+    assert items[2]["justify"] == "BL" and "position" in items[2] and "insert" not in items[2]
+    assert items[0]["hs"] == {"issue_id": "a-1", "outcome": "FAIL"}
+
+
+def test_power_cad_payload_matches_create_many_contract() -> None:
+    """Contract test against a vendored minimal snapshot of power-cad's ``cad_create_many``.
+
+    Source: power-cad ``dotnet/PowerCad.Server/CadTools.cs`` (``CreateMany``) and
+    ``dotnet/PowerCad.Core/Commands/CommandDispatcher.Bulk.cs`` / ``CreateSpec.cs`` at commit
+    845f63a4114e6dc43a48cd8b9bdaf007d8f5fb63. The snapshot (``tests/contracts/``) is
+    ``additionalProperties: false`` wherever power-cad uses ``AllowOnly``, so a renamed or
+    stray key fails here instead of at AutoCAD.
+    """
+    import json
+    from pathlib import Path
+
+    import jsonschema
+
+    path = Path(__file__).parent / "contracts" / "power_cad_create_many.schema.json"
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema)
+    payload = to_power_cad_payload(build_marker_plan(_issues()))
+    assert list(validator.iter_errors(payload)) == []
+    # The earlier (unverified) shape must be rejected by the snapshot.
+    old = {"layers": payload["layers"], "items": payload["entities"]}
+    assert list(validator.iter_errors(old))
+    bad = json.loads(json.dumps(payload))
+    bad["entities"][2]["insert"] = bad["entities"][2].pop("position")
+    assert list(validator.iter_errors(bad))
+    # Every hs tag fits power-cad's 255-character XData string limit.
+    for e in payload["entities"]:
+        assert all(len(f"{k}={v}") <= 255 for k, v in e["hs"].items())
 
 
 def test_apply_markers_to_dxf_readback() -> None:

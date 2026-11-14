@@ -14,13 +14,19 @@
 - [ ] 실제 IdP(Keycloak 등)와 OIDC 연동 검증 (지금은 로컬 RSA 키 테스트만)
 - [ ] 로컬 PostgreSQL 통합 테스트 실행 (그동안 PC 자원 문제로 CI에서만 확인)
 
-## P1 — 연동 확인
+## 사용자 조치 필요
+
+코드로는 끝낼 수 없고 사람이 실제 프로그램·데이터로 확인해야 하는 항목.
 
 - [ ] BCF 3.0 zip을 BIMcollab·Solibri 등 실제 뷰어에서 열어 확인
-- [ ] `markers.to_power_cad_payload` 키 이름을 power-cad `cad_create_many` 실제 스키마와 대조
-- [ ] MinIO 저장소 `get_bytes` 테스트 (CI는 Local 저장소만 사용)
-- [ ] site-pipeline `parcel_facts` → `land_parcel` 입력을 실제 필지로 검증
-- [ ] Ontology로 stale edge 내보내기 (지금은 API로만 stale 확인 가능)
+- [ ] power-cad 실제 AutoCAD에서 마커 payload 실행 확인: `to_power_cad_payload` 결과에
+      문서 바인딩(`cad_bind_document`)을 하고 `cad_create_many dry_run=true`로 먼저 실행
+      (키 이름은 power-cad 소스 845f63a4 기준으로 맞춤, 라이브 실행은 미확인)
+- [ ] 실제 MinIO 서버로 업로드→읽기 1회 확인 (코드 경로는 클라이언트 대역으로 단위 테스트함)
+- [ ] site-pipeline `parcel_facts`를 실제 필지에서 만든 값으로 `land_parcel_from_site_pipeline`에
+      넣어 검토 결과 확인 (어댑터는 기록한 모양·합성 값으로만 테스트함)
+- [ ] Ontology-platform에서 `archontos-stale-edges/1` 파일을 읽어 `stale_links`에 반영
+      (ArchOntos 쪽 내보내기는 완료, 소비 쪽은 Ontology-platform 작업)
 
 ## P2 — 기능 보완
 

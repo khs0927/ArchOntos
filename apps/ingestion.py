@@ -22,6 +22,8 @@ from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_che
 from archontos.cad.diff import DiffInputError, DiffTolerances
 from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
+from archontos.cad.export_stale import build_stale_edges
+from archontos.cad.export_stale import dumps as stale_edges_dumps
 from archontos.cad.ifc import parse_ifc
 from archontos.cad.issue_notes import CadIssueNoteRepository, IssueNotFound, import_bcf_topics
 from archontos.cad.issue_persistence import CadIssueRepository, RunNotFound
@@ -466,6 +468,44 @@ async def list_cad_check_results(
         except InvalidCadCursor as exc:
             raise _cad_cursor_error(exc) from exc
     return {"items": items, "next_cursor": nxt}
+
+
+@app.get(
+    "/v1/cad/revisions/{revision_id}/checks/stale-edges",
+    dependencies=[require(Permission.CAD_READ)],
+)
+async def export_cad_stale_edges(revision_id: UUID):
+    """``archontos-stale-edges/1`` for Ontology: stale check results with their subject refs."""
+    results: list[dict[str, Any]] = []
+    objects: list[dict[str, Any]] = []
+    async with get_session_factory()() as session, session.begin():
+        repo = CadRepository(session)
+        await _revision_or_404(repo, revision_id)
+        cursor: str | None = None
+        while True:
+            items, cursor = await CadCheckRepository(session).list_results(
+                str(revision_id),
+                run_id=None,
+                outcome=None,
+                rule_version_id=None,
+                arch_object_id=None,
+                limit=500,
+                cursor=cursor,
+            )
+            results += [r for r in items if r["stale"]]
+            if cursor is None:
+                break
+        if results:
+            cursor = None
+            while True:
+                items, cursor = await repo.list_objects(
+                    str(revision_id), kind=None, layer=None, limit=500, cursor=cursor
+                )
+                objects += items
+                if cursor is None:
+                    break
+    document = build_stale_edges(results, objects, revision_id=str(revision_id))
+    return Response(content=stale_edges_dumps(document), media_type="application/json")
 
 
 # --- MVP-3: permit vs construction / revision diff ---------------------------------------------

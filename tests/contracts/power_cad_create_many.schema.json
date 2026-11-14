@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "power-cad cad_create_many arguments (minimal snapshot: the subset ArchOntos emits)",
+  "x-source": "power-cad dotnet/PowerCad.Server/CadTools.cs CreateMany; dotnet/PowerCad.Core/Commands/CommandDispatcher.Bulk.cs; dotnet/PowerCad.Core/Commands/CreateSpec.cs @ 845f63a4114e6dc43a48cd8b9bdaf007d8f5fb63",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entities"],
+  "properties": {
+    "entities": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/circle"},
+          {"$ref": "#/$defs/line"},
+          {"$ref": "#/$defs/mtext"}
+        ]
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "color": {"type": "integer", "minimum": 1, "maximum": 255},
+          "linetype": {"type": "string"},
+          "lineweight": {},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "xdata_app": {"type": "string", "pattern": "^[A-Za-z0-9_$-]{1,255}$"},
+    "skip_missing_blocks": {"type": "boolean"},
+    "dry_run": {"type": "boolean"},
+    "offset": {"$ref": "#/$defs/point"}
+  },
+  "$defs": {
+    "point": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 2,
+      "maxItems": 3
+    },
+    "hs": {
+      "type": "object",
+      "additionalProperties": {"type": ["string", "number", "boolean"]},
+      "propertyNames": {"minLength": 1, "pattern": "^[^=]+$"}
+    },
+    "circle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "center", "radius"],
+      "properties": {
+        "type": {"const": "circle"},
+        "layer": {"type": "string"},
+        "color": {"type": "integer", "minimum": 1, "maximum": 255},
+        "linetype": {"type": "string"},
+        "lineweight": {},
+        "hs": {"$ref": "#/$defs/hs"},
+        "center": {"$ref": "#/$defs/point"},
+        "radius": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "start", "end"],
+      "properties": {
+        "type": {"const": "line"},
+        "layer": {"type": "string"},
+        "color": {"type": "integer", "minimum": 1, "maximum": 255},
+        "linetype": {"type": "string"},
+        "lineweight": {},
+        "hs": {"$ref": "#/$defs/hs"},
+        "start": {"$ref": "#/$defs/point"},
+        "end": {"$ref": "#/$defs/point"}
+      }
+    },
+    "mtext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text", "position"],
+      "properties": {
+        "type": {"const": "mtext"},
+        "layer": {"type": "string"},
+        "color": {"type": "integer", "minimum": 1, "maximum": 255},
+        "linetype": {"type": "string"},
+        "lineweight": {},
+        "hs": {"$ref": "#/$defs/hs"},
+        "text": {"type": "string", "minLength": 1},
+        "position": {"$ref": "#/$defs/point"},
+        "height": {"type": "number", "exclusiveMinimum": 0},
+        "width": {"type": "number", "minimum": 0},
+        "rotation": {"type": "number"},
+        "style": {"type": "string"},
+        "justify": {"enum": ["TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]}
+      }
+    }
+  }
+}

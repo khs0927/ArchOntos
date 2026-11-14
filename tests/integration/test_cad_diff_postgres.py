@@ -84,6 +84,15 @@ async def test_revision_diff_impact_transitions_and_stale(client, monkeypatch):
     # the base revision's checks are now stale, the target has its own fresh verdicts
     runs = (await http.get(f"/v1/cad/revisions/{permit}/checks")).json()["items"]
     assert runs[0]["stale"] is True and runs[0]["stale_by_diff_ids"] == [diff["id"]]
+    exported = await http.get(f"/v1/cad/revisions/{permit}/checks/stale-edges")
+    assert exported.status_code == 200, exported.text
+    stale_doc = exported.json()
+    assert stale_doc["schema"] == "archontos-stale-edges/1" and stale_doc["revision_id"] == permit
+    assert stale_doc["summary"]["edge_count"] == 1
+    (edge,) = stale_doc["edges"]
+    assert edge["rule_version_id"] == rule_id and edge["stale_by_diff_ids"] == [diff["id"]]
+    fresh = (await http.get(f"/v1/cad/revisions/{built}/checks/stale-edges")).json()
+    assert fresh["edges"] == []
     target_runs = (await http.get(f"/v1/cad/revisions/{built}/checks")).json()["items"]
     assert len(target_runs) == 1 and target_runs[0]["fail_count"] == 1
     assert target_runs[0]["stale"] is False

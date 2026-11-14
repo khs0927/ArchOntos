@@ -200,9 +200,14 @@ class MinioArtifactStore:
         key = parsed.path.lstrip("/")
         if parsed.scheme != "s3" or parsed.netloc != self.bucket or not key:
             raise ArtifactReadError("artifact URI is outside the configured MinIO bucket")
-        response = self.client.get_object(self.bucket, key)
+        try:
+            response = self.client.get_object(self.bucket, key)
+        except Exception as exc:
+            raise ArtifactReadError(f"cannot read artifact: {storage_uri}") from exc
         try:
             return bytes(response.read())
+        except Exception as exc:
+            raise ArtifactReadError(f"cannot read artifact: {storage_uri}") from exc
         finally:
             response.close()
             response.release_conn()
@@ -219,10 +224,13 @@ class MinioArtifactStore:
         if bucket != self.bucket or not key:
             raise ArtifactReadError("artifact URI is outside the configured MinIO bucket")
 
-        response = self.client.get_object(bucket, key)
+        try:
+            response = self.client.get_object(bucket, key)
+        except Exception as exc:
+            raise ArtifactReadError(f"cannot read JSON artifact: {storage_uri}") from exc
         try:
             payload = json.loads(response.read().decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ArtifactReadError(f"cannot read JSON artifact: {storage_uri}") from exc
         finally:
             response.close()
