@@ -150,6 +150,10 @@ to drop and recreate the dumped objects), creates the `archontos_app` group role
 
 **CI/local check:**
 `ARCHONTOS_TEST_DATABASE_URL=postgresql://u:p@host:5432/postgres ops/backup-restore-check.sh`
+
+On Windows without Docker Desktop, `ops/test-db-lite.ps1 test` starts a throwaway pgvector
+container on the light `docker-lite` WSL distro (Alpine dockerd), runs the full suite against it
+and removes it (`up` / `down` to manage it yourself). It refuses to start below 1.5 GB free RAM.
 migrates a throwaway database, seeds rows, dumps, restores into another throwaway database and
 fails on any row-count difference. CI runs it against PostgreSQL 18 (ci.yml). Rehearse a real
 restore regularly: a backup that has not been restored is not a backup.
