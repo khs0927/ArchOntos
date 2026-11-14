@@ -1,6 +1,6 @@
 # Ontology ↔ ArchOntos 연동 (도면 KG 사실 → 법규 규칙 평가 → KG 링크)
 
-ArchOntos 규칙과 Ontology(도면 파싱 → 지식그래프) 사이의 계약은 세 가지 JSON 스키마로 정해져 있습니다.
+ArchOntos 규칙과 Ontology(도면 파싱 → 지식그래프) 사이의 계약은 네 가지 JSON 스키마로 정해져 있습니다.
 네트워크 호출은 하지 않습니다. 모두 로컬 파일이나 Ontology API(bearer 토큰 필요)로 주고받습니다.
 
 | 스키마 | 생산 | 소비 | 내용 |
@@ -8,6 +8,7 @@ ArchOntos 규칙과 Ontology(도면 파싱 → 지식그래프) 사이의 계약
 | `archontos-aec-subject-ref/1` | Ontology | ArchOntos `AecSubjectRef` | 프로젝트·도면·객체 참조. `source_id`/`source_byte_revision_id`(파일 sha256)/`parser_revision_id`는 셋이 함께 있거나 모두 없어야 함 |
 | `aec-facts-export/1` | Ontology `aec operational kg-facts <project>` 또는 `GET /v1/kg/projects/{key}/facts` | `python -m archontos.integration.ontology` | 관측 사실(`building.highest_observed_floor`, `building.deepest_observed_basement`, `building.storeys`, `space.uses`, `steel.sections`), 사실별 근거(provenance), 주체 참조 목록 |
 | `archontos-rule-export/1` | `--export-links` | Ontology `kg-build --rules` (`AEC_RULES_FILE`) | 규칙 id·버전·평가 결과와 `applies_to` 주체 참조. Ontology가 `subjectTo` 엣지로 KG에 연결 |
+| `archontos-stale-edges/1` | ArchOntos `python -m archontos.cad.export_stale` 또는 `GET /v1/cad/revisions/{id}/checks/stale-edges` | Ontology (규칙 `subjectTo` 엣지의 stale 표시 참고) | 이후 리비전 변경으로 더는 최신이 아닌 검토 결과(`stale_by_diff_ids`)와 대상 주체 참조(`applies_to`). 결정적 JSON, `sha256` 포함 |
 
 ## 사용 순서
 
@@ -21,6 +22,20 @@ python -m archontos.integration.ontology --rule rule.json --facts D:\AECData\rul
 # 3) Ontology: 링크를 KG에 반영
 aec operational kg-build --rules D:\AECData\rules\links.json
 ```
+
+### stale 엣지 내보내기 (네트워크 없음)
+
+```powershell
+# 도면 리비전 API 응답을 파일로 저장한 뒤 변환 (또는 GET .../checks/stale-edges 를 그대로 저장)
+python -m archontos.cad.export_stale --results results.json --objects objects.json `
+  --revision-id <리비전 id> --out D:\AECDataules\stale-edges.json
+```
+
+- 대상: 리비전이 변경 있는 계보(lineage) diff의 base가 되어 최신이 아니게 된 검토 결과만 내보냅니다.
+- `applies_to`는 객체에 저장된 `archontos-aec-subject-ref/1`입니다. 저장된 참조가 없는 객체는 만들어 내지 않고
+  `unresolved_object_ids`에 둡니다. 정렬·정규 JSON이라 같은 입력은 같은 바이트(`sha256`)입니다.
+- Ontology 쪽 소비(`kg-build`가 이 파일을 읽어 `stale_links`를 갱신)는 아직 구현 전입니다. Ontology는 지금도
+  `source_byte_revision_id` 해시 비교로 스스로 stale을 판단합니다.
 
 ## 판단 원칙 (fail closed)
 
