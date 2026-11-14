@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
@@ -14,12 +15,15 @@ from archontos.actions.persistence import PostgresActionStore
 from archontos.actions.service import ProposedAction
 from archontos.authz import AuthorizationError, Permission, authorize
 from archontos.cad.bcf import export_bcf
+from archontos.cad.bcf_import import MAX_ZIP_BYTES as MAX_BCF_BYTES
+from archontos.cad.bcf_import import BcfImportError, parse_bcf
 from archontos.cad.check_persistence import CadCheckRepository, inputs_digest
 from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_checks
 from archontos.cad.diff import DiffInputError, DiffTolerances
 from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
 from archontos.cad.ifc import parse_ifc
+from archontos.cad.issue_notes import CadIssueNoteRepository, IssueNotFound, import_bcf_topics
 from archontos.cad.issue_persistence import CadIssueRepository, RunNotFound
 from archontos.cad.links import LinkInputError, ModelLinkRepository
 from archontos.cad.markers import MarkerError, apply_markers_to_dxf, to_power_cad_payload
@@ -687,6 +691,71 @@ async def export_cad_issues_bcf(
     )
 
 
+class CadIssueNoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    body: str = Field(min_length=1, max_length=4000)
+
+
+@app.post(
+    "/v1/cad/issues/{issue_id}/notes",
+    status_code=201,
+    dependencies=[require(Permission.CAD_NOTE)],
+)
+async def add_cad_issue_note(issue_id: UUID, payload: CadIssueNoteRequest):
+    """Append a note to an issue; the author is the request actor (notes are never edited)."""
+    if not payload.body.strip():
+        raise HTTPException(status_code=422, detail="body must not be blank")
+    async with get_session_factory()() as session, session.begin():
+        try:
+            return await CadIssueNoteRepository(session).add(str(issue_id), payload.body)
+        except IssueNotFound as exc:
+            raise HTTPException(status_code=404, detail="issue not found") from exc
+
+
+@app.get("/v1/cad/issues/{issue_id}/notes", dependencies=[require(Permission.CAD_READ)])
+async def list_cad_issue_notes(
+    issue_id: UUID,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    cursor: str | None = None,
+):
+    async with get_session_factory()() as session, session.begin():
+        try:
+            items, nxt = await CadIssueNoteRepository(session).list(
+                str(issue_id), limit=limit, cursor=cursor
+            )
+        except IssueNotFound as exc:
+            raise HTTPException(status_code=404, detail="issue not found") from exc
+        except InvalidCadCursor as exc:
+            raise _cad_cursor_error(exc) from exc
+    return {"items": items, "next_cursor": nxt}
+
+
+@app.post("/v1/cad/issues/import.bcf", dependencies=[require(Permission.CAD_NOTE)])
+async def import_cad_issues_bcf(
+    request: Request, run_id: UUID | None = None, revision_id: UUID | None = None
+):
+    """Import a BCF 3.0 zip (request body): topic statuses and comments become issue notes.
+
+    Topics are matched to existing issues by ArchOntos' deterministic topic GUID; unknown
+    topics are reported and never create issues. Re-importing is idempotent by comment GUID.
+    ``run_id`` / ``revision_id`` narrow the issues considered."""
+    data = await request.body()
+    if len(data) > MAX_BCF_BYTES:
+        raise HTTPException(status_code=413, detail="BCF upload exceeds 20 MiB")
+    try:
+        topics = await asyncio.to_thread(parse_bcf, data)
+    except BcfImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    async with get_session_factory()() as session, session.begin():
+        return await import_bcf_topics(
+            session,
+            topics,
+            source_sha256=hashlib.sha256(data).hexdigest(),
+            run_id=str(run_id) if run_id else None,
+            revision_id=str(revision_id) if revision_id else None,
+        )
+
+
 # --- MVP-5: compliance reports + marker actions (approval gate) ---------------------------------
 
 
@@ -832,53 +901,58 @@ async def propose_cad_markers(run_id: UUID):
 
 @app.post("/v1/cad/markers/{action_id}/execute", dependencies=[require(Permission.ACTION_EXECUTE)])
 async def execute_cad_markers(action_id: UUID):
-    """Execute an APPROVED marker action: write a new DXF artifact; the original is untouched."""
+    """Execute an APPROVED marker action: write a new DXF artifact; the original is untouched.
+
+    The output artifact link (with its outbox/audit rows) and the action's ``succeeded`` status
+    are committed in ONE database transaction, guarded by a row lock on the action, so there is
+    no state with an output but a still-approved action (or the reverse). Re-running returns the
+    stored output."""
     actions = PostgresActionStore(get_session_factory())
-    found = await actions.get(str(action_id))
-    if found is None or found.action_type != MARKER_ACTION_TYPE:
-        raise HTTPException(status_code=404, detail="marker action not found")
-    if found.status != "succeeded":
-        try:
-            assert_can_execute(status=found.status, requires_approval=found.requires_approval)
-        except ApprovalDenied as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    inputs = found.input_payload
+    actor = current_actor(default="anonymous")
     store = _artifact_store()
+    created = False
     async with get_session_factory()() as session, session.begin():
+        found = await actions.lock(session, str(action_id))
+        if found is None or found.action_type != MARKER_ACTION_TYPE:
+            raise HTTPException(status_code=404, detail="marker action not found")
         existing = await find_marker_output(session, str(action_id))
-        if existing is not None:
-            return {"created": False, "output": existing, "action": found.as_api()}
-        run = await _run_or_404(session, UUID(inputs["run_id"]))
-        uri = await revision_source_uri(session, inputs["revision_id"])
-        if uri is None:
-            raise HTTPException(status_code=404, detail="CAD revision not found")
-        original = await store.get_bytes(uri)
-        try:
-            data = apply_markers_to_dxf(original, inputs["plan"])
-        except (CadParseError, CadDependencyError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        ref = await store.put_bytes("cad-markers", data, mime="image/vnd.dxf", suffix=".dxf")
-        art_id = await insert_artifact(session, ref)
-        link, _ = await record_output(
-            session,
-            output_id=output_id_for("markers", str(action_id)),
-            kind="markers",
-            artifact_id=art_id,
-            run_id=run["id"],
-            revision_id=inputs["revision_id"],
-            action_id=str(action_id),
-            issue_ids=list(inputs["issue_ids"]),
-            sha256=ref.content_hash,
-            media_type="image/vnd.dxf",
-            meta={"plan_sha256": inputs["plan"]["sha256"], "source_storage_uri": uri},
-            jurisdiction_code=run["jurisdiction_code"],
-            topic="cad.markers-exported",
-            event_type="CadMarkersExported",
-        )
-    executed = found
-    if found.status != "succeeded":
-        try:
-            executed = await actions.execute(str(action_id), current_actor(default="anonymous"))
-        except ApprovalDenied as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"created": True, "output": link, "action": executed.as_api()}
+        if found.status != "succeeded":
+            try:
+                assert_can_execute(status=found.status, requires_approval=found.requires_approval)
+            except ApprovalDenied as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if existing is None:
+            inputs = found.input_payload
+            run = await _run_or_404(session, UUID(inputs["run_id"]))
+            uri = await revision_source_uri(session, inputs["revision_id"])
+            if uri is None:
+                raise HTTPException(status_code=404, detail="CAD revision not found")
+            original = await store.get_bytes(uri)
+            try:
+                data = apply_markers_to_dxf(original, inputs["plan"])
+            except (CadParseError, CadDependencyError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            ref = await store.put_bytes("cad-markers", data, mime="image/vnd.dxf", suffix=".dxf")
+            art_id = await insert_artifact(session, ref)
+            existing, created = await record_output(
+                session,
+                output_id=output_id_for("markers", str(action_id)),
+                kind="markers",
+                artifact_id=art_id,
+                run_id=run["id"],
+                revision_id=inputs["revision_id"],
+                action_id=str(action_id),
+                issue_ids=list(inputs["issue_ids"]),
+                sha256=ref.content_hash,
+                media_type="image/vnd.dxf",
+                meta={"plan_sha256": inputs["plan"]["sha256"], "source_storage_uri": uri},
+                jurisdiction_code=run["jurisdiction_code"],
+                topic="cad.markers-exported",
+                event_type="CadMarkersExported",
+            )
+        if found.status != "succeeded":
+            await actions.execute_in(session, str(action_id), actor)
+    executed = await actions.get(str(action_id))
+    if executed is None:
+        raise HTTPException(status_code=404, detail="marker action not found")
+    return {"created": created, "output": existing, "action": executed.as_api()}

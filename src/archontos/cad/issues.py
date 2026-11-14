@@ -8,8 +8,11 @@ diff's *target* revision) are marked ``origin = "regression"`` with the diff id.
 Status is derived from newer revisions, never carried over silently:
 
 * ``open``      the run's revision has no superseding lineage diff (with changes);
-* ``resolved``  a superseding diff re-ran this run and the rule now PASSes on the target;
-* ``stale``     the revision was superseded, but no re-run shows the rule passing. The target
+* ``resolved``  a superseding diff shows the rule passing: either it re-ran this run checks
+                (``rerun_checks``), or the target revision has its own check run for the same
+                rule_version and, following the diff lineage, the offending object was removed,
+                the rule PASSes, or none of the object successors is still an offender;
+* ``stale``     the revision was superseded, but nothing above shows the issue gone. The target
                 revision's own run carries its own (new) issues.
 
 Ids are deterministic (uuid5), so deriving twice gives the same issues; a status row is only
@@ -35,8 +38,12 @@ def issue_id_for(run_id: str, rule_version_id: str, arch_object_id: str | None) 
     )
 
 
-def status_id_for(issue_id: str, status: str, basis_diff_id: str | None) -> str:
-    return str(uuid.uuid5(CAD_NAMESPACE, f"issue-status\n{issue_id}\n{status}\n{basis_diff_id}"))
+def status_id_for(issue_id: str, status: str, basis_diff_id: str | None, seq: int = 0) -> str:
+    """Deterministic status row id; ``seq`` = number of earlier rows of the issue (0 = first)."""
+    suffix = f"\n{seq}" if seq else ""
+    return str(
+        uuid.uuid5(CAD_NAMESPACE, f"issue-status\n{issue_id}\n{status}\n{basis_diff_id}{suffix}")
+    )
 
 
 def _points(geometry: Mapping[str, Any] | None) -> list[tuple[float, float]]:
@@ -73,12 +80,47 @@ def object_label(obj: Mapping[str, Any]) -> str:
     return f"{obj.get('kind', 'object')}:{name}" if name else str(obj.get("kind", "object"))
 
 
+def _resolved_by_lineage(
+    diff: Mapping[str, Any], rule_version_id: str, arch_object_id: str | None
+) -> bool:
+    """Lineage-based resolution against one superseding diff (no ``rerun_checks`` needed).
+
+    ``diff["changes"]`` maps a base ``arch_object`` id to ``{"change_type", "target_object_ids"}``
+    (from ``cad_object_change``); ``diff["target_results"]`` maps a rule_version id to the
+    ``{"outcome", "arch_object_ids"}`` of the check run on the diff target revision.
+
+    * the offending object was removed -> resolved;
+    * the target revision has a run for the rule and it PASSes -> resolved;
+    * it still FAILs/REVIEWs but names offending objects and none of them is a lineage successor
+      of this issue object -> resolved (the object itself now passes);
+    * anything else (no run for the rule, object still offending, offenders unknown) -> not
+      resolved.
+    """
+    change = (diff.get("changes") or {}).get(arch_object_id) if arch_object_id else None
+    if change and change.get("change_type") == "removed":
+        return True
+    result = (diff.get("target_results") or {}).get(rule_version_id)
+    if not result:
+        return False
+    if result.get("outcome") == "PASS":
+        return True
+    offenders = {str(x) for x in result.get("arch_object_ids") or ()}
+    successors = {str(x) for x in (change or {}).get("target_object_ids") or ()}
+    return bool(change and offenders and successors and not (offenders & successors))
+
+
 def derive_status(
-    run_id: str, rule_version_id: str, superseding_diffs: Iterable[Mapping[str, Any]]
+    run_id: str,
+    rule_version_id: str,
+    superseding_diffs: Iterable[Mapping[str, Any]],
+    arch_object_id: str | None = None,
 ) -> tuple[str, str | None]:
     """(status, basis diff id) for one issue of ``run_id``.
 
-    ``superseding_diffs`` are lineage diffs with changes whose *base* is the run's revision.
+    ``superseding_diffs`` are lineage diffs with changes whose *base* is the run revision.
+    A diff resolves the issue either because it re-ran this run checks (``rerun_checks``) and
+    the rule PASSes on the target, or by lineage (:func:`_resolved_by_lineage`); the first
+    resolving diff (by id) is the basis. Otherwise a superseded issue is ``stale``.
     """
     stale_by: str | None = None
     for diff in sorted(superseding_diffs, key=lambda d: str(d["id"])):
@@ -86,6 +128,8 @@ def derive_status(
             if t.get("base_run_id") == run_id and t.get("rule_version_id") == rule_version_id:
                 if t.get("target_outcome") == "PASS":
                     return "resolved", str(diff["id"])
+        if _resolved_by_lineage(diff, rule_version_id, arch_object_id):
+            return "resolved", str(diff["id"])
         if stale_by is None:
             stale_by = str(diff["id"])
     if stale_by is not None:
@@ -137,7 +181,6 @@ def derive_issues(
         object_ids: list[str | None] = [
             *sorted({str(x) for x in result.get("arch_object_ids") or ()})
         ] or [None]
-        status, basis = derive_status(run_id, rv, superseding)
         regression = regressions.get(rv)
         result_handles = [str(h) for h in result.get("entity_handles") or ()]
         for oid in object_ids:
@@ -149,6 +192,7 @@ def derive_issues(
                 handles = sorted(set(result_handles))
             refs = sorted(source_refs.get(oid, [])) if oid else []
             iid = issue_id_for(run_id, rv, oid)
+            status, basis = derive_status(run_id, rv, superseding, oid)
             issues[iid] = {
                 "id": iid,
                 "run_id": run_id,

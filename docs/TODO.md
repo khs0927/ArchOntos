@@ -26,10 +26,6 @@
 
 - [ ] 층/건물 사실(`building.use_group` 등) DXF에서 추출 — IFC는 층수만 자동
 - [ ] IFC·SketchUp 리비전에도 도면 마커 적용 — 지금은 DXF만, 나머지는 BCF로만
-- [ ] `cad_issue_note` API (테이블만 있음)
-- [ ] BCF import (토픽 상태·코멘트를 검토 메모로)
-- [ ] marker execute를 단일 트랜잭션으로 (지금은 출력 저장 → 액션 succeeded 순서, 멱등)
-- [ ] 리비전 diff 이후 이슈 resolved 판정을 `rerun_checks` 없이도 가능하게
 - [ ] DXF↔IFC 형상 기반 자동 링크, IfcOpeningElement 처리
 - [ ] SketchUp Ruby exporter 스크립트, Revit→IFC 자동화
 

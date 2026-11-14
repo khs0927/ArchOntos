@@ -10,8 +10,8 @@
 * `origin = regression` (+ `diff_id`) when an MVP-3 re-run on this revision shows a regression
   (`PASS->FAIL` etc.) for the rule; otherwise `check`.
 * Status is derived, never carried over: `open` (no superseding lineage diff with changes),
-  `resolved` (a superseding diff re-ran this run and the rule PASSes on the target), `stale`
-  (superseded without such a re-run, or still failing there; the target run has its own issues).
+  `resolved` (see below), `stale`
+  (superseded without evidence that the issue is gone; the target run has its own issues).
   Every new status is a new append-only `cad_issue_status` row; the latest is current.
 * Each issue keeps the evidence locator(s), jurisdiction, effective interval, reference date,
   outcome, DXF handles, source refs (`ifc_guid`, `skp_persistent_id`) and the plan bbox (m).
@@ -23,6 +23,38 @@
 Tables (all append-only, `archontos_app` SELECT/INSERT only): `cad_issue` (RLS),
 `cad_issue_status`, `cad_issue_note`, `cad_issue_artifact` (RLS; generated bcf/report/markers
 outputs linked to run, revision, action and issues).
+
+## Resolution without `rerun_checks` (status `resolved`)
+
+A superseding lineage diff (base = the run revision) resolves an issue when, deterministically:
+the offending object was `removed`; or the newer revision has a check run for the same
+rule_version (same jurisdiction, preferring the issue run reference date, then the newest run)
+and that rule PASSes; or it still FAILs/REVIEWs but names offending objects and none of them is
+a lineage successor (`cad_object_change.target_object_id`) of the issue object. A diff that
+re-ran the checks (`rerun_checks`) resolves as before. Otherwise a superseded issue is `stale`
+(also when the newer revision has no run for the rule or the offenders are unknown). Deriving
+again appends a status row whenever the derived `(status, basis diff)` differs from the latest
+one, so `stale` turns into `resolved` once the newer revision is checked.
+
+## Issue notes (`src/archontos/cad/issue_notes.py`, migration `021`)
+
+`POST /v1/cad/issues/{id}/notes {body}` (`cad.note`, 1..4000 chars) appends a note; the author
+(`created_by`) is the request actor. `GET /v1/cad/issues/{id}/notes?limit&cursor` (`cad.read`)
+lists them oldest first. Notes are append-only and read through the issue jurisdiction RLS.
+Imported notes carry `kind` `bcf_comment` / `bcf_status` plus `external_guid`, `external_author`
+and `external_at`.
+
+## BCF import (`src/archontos/cad/bcf_import.py`)
+
+`POST /v1/cad/issues/import.bcf[?run_id=|revision_id=]` (`cad.note`) takes a BCF 3.x zip as the
+request body (max 20 MiB). Only `<guid>/markup.bcf` entries are read: topics are matched to
+caller-visible issues by `topic_guid(issue_id)`; the topic status becomes a `bcf_status` note
+(idempotent by status + modification date) and each comment (BCF 3.0 `Topic/Comments` or 2.1
+`Markup/Comment`) a `bcf_comment` note idempotent by comment GUID. Unknown topics are listed in
+`unknown_topic_guids`; issues are never created and the derived issue status is never changed by
+an import. The zip is validated first (entry count, per-entry and total size, no absolute or
+`..` names, no encryption, `bcf.version` 3.x) and XML is parsed with `defusedxml` (DTDs and
+entities refused). Failures are 422; larger uploads 413.
 
 ## BCF 3.0 (`src/archontos/cad/bcf.py`)
 
@@ -48,16 +80,12 @@ as canonical JSON and self-contained HTML, stores both as new artifacts, links t
 2. `POST /v1/actions/{id}/approve` on the action service: four-eyes (proposer cannot approve).
 3. `POST /v1/cad/markers/{id}/execute` (`action.execute`) only after approval: reads the original
    DXF, writes a NEW DXF artifact with the `ARCHONTOS-ISSUE` layer, links it (kind `markers`),
-   emits `cad.markers-exported`, then marks the action succeeded. The original artifact is never
+   emits `cad.markers-exported` and marks the action succeeded, all in ONE transaction
+   (row lock on the action; a failure leaves no output and the action stays approved). The original artifact is never
    written. The generic `POST /v1/actions/{id}/execute` refuses marker actions (409).
 
 ## Limits
 
 * `to_power_cad_payload` key names have not been checked against the live power-cad
   `cad_create_many` schema; adapt before sending it to AutoCAD.
-* Execute is not one transaction with the action status: the DXF output is written and linked
-  first (idempotent per action), then the action is marked succeeded.
 * Markers are DXF-only; IFC/SketchUp revisions get BCF instead.
-* `resolved` needs a diff re-run (`rerun_checks`); a per-object fix while the rule still fails
-  elsewhere stays `stale`.
-* Issue notes have a table but no API yet.

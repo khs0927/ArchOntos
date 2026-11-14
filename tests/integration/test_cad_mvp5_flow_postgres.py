@@ -11,6 +11,7 @@ import pytest_asyncio
 
 import apps.action as action_app
 import apps.ingestion as ingestion_app
+from archontos.actions.persistence import PostgresActionStore
 from archontos.config import get_settings
 from archontos.storage.artifacts import LocalArtifactStore
 from tests.cad_fixtures import revision_plan
@@ -43,7 +44,7 @@ async def apps(mvp0_db, monkeypatch, tmp_path):
     get_settings.cache_clear()
 
 
-async def test_derive_bcf_report_propose_approve_execute(apps):
+async def test_derive_bcf_report_propose_approve_execute(apps, monkeypatch):
     ing, act, factory, store = apps
     up = await ing.post(
         "/v1/cad/artifacts",
@@ -119,6 +120,18 @@ async def test_derive_bcf_report_propose_approve_execute(apps):
     assert self_ok.status_code == 403
     ok = await act.post(f"/v1/actions/{action_id}/approve", json={}, headers=BOB)
     assert ok.status_code == 200, ok.text
+
+    # a failure after the output was written rolls the whole execute back (single transaction)
+    async def _boom(self, session, action_id, actor):
+        raise RuntimeError("simulated failure after the output link")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PostgresActionStore, "execute_in", _boom)
+        with pytest.raises(RuntimeError, match="simulated"):
+            await ing.post(f"/v1/cad/markers/{action_id}/execute", headers=BOB)
+    assert await count_rows(factory, "cad_issue_artifact", "kind = 'markers'") == 0
+    assert await count_rows(factory, "outbox_message", "topic = 'cad.markers-exported'") == 0
+    assert await count_rows(factory, "action", f"id = '{action_id}' AND status = 'approved'") == 1
 
     done = await ing.post(f"/v1/cad/markers/{action_id}/execute", headers=BOB)
     assert done.status_code == 200, done.text

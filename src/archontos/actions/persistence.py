@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from archontos.actions.gate import ApprovalDenied, assert_can_execute
 from archontos.actions.service import ProposedAction
@@ -198,68 +198,100 @@ class PostgresActionStore:
     async def execute(self, action_id: str, actor: str) -> StoredAction:
         async with self.session_factory() as session:
             async with session.begin():
-                await bind_actor(session, actor)
-                row = (
-                    await session.execute(
-                        text(
-                            """
-                            SELECT status, requires_approval, proposed_output_json, target_refs_json
-                            FROM action WHERE id = CAST(:id AS uuid)
-                            FOR UPDATE
-                            """
-                        ),
-                        {"id": action_id},
-                    )
-                ).first()
-                if row is None:
-                    raise KeyError(action_id)
-                assert_can_execute(status=row.status, requires_approval=bool(row.requires_approval))
-                await session.execute(
-                    text("UPDATE action SET status = 'running' WHERE id = CAST(:id AS uuid)"),
-                    {"id": action_id},
-                )
-                result = {
-                    "format": dict(row.proposed_output_json).get("format", "json"),
-                    "status": "generated",
-                    "actor": actor,
-                    "target_refs": list(row.target_refs_json),
-                }
-                await session.execute(
-                    text(
-                        """
-                        INSERT INTO action_run(action_id, result_json)
-                        VALUES (CAST(:id AS uuid), CAST(:result AS jsonb))
-                        """
-                    ),
-                    {"id": action_id, "result": json.dumps(result, sort_keys=True)},
-                )
-                await session.execute(
-                    text(
-                        """
-                        UPDATE action
-                        SET status = 'succeeded',
-                            proposed_output_json = CAST(:output AS jsonb)
-                        WHERE id = CAST(:id AS uuid)
-                        """
-                    ),
-                    {
-                        "id": action_id,
-                        "output": json.dumps(
-                            {**dict(row.proposed_output_json), "status": "generated"}
-                        ),
-                    },
-                )
-                await self._audit(
-                    session,
-                    actor=actor,
-                    action="execute",
-                    target_id=action_id,
-                    after={"status": "succeeded"},
-                )
+                await self.execute_in(session, action_id, actor)
         loaded = await self.get(action_id)
         if loaded is None:
             raise RuntimeError("row vanished after commit")
         return loaded
+
+    async def lock(self, session: AsyncSession, action_id: str) -> StoredAction | None:
+        """Row-lock an action inside the caller's transaction (``FOR UPDATE``) and load it."""
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id::text, action_type, target_refs_json, input_json,
+                           proposed_output_json, status, requires_approval, created_by
+                    FROM action WHERE id = CAST(:id AS uuid) FOR UPDATE
+                    """
+                ),
+                {"id": action_id},
+            )
+        ).first()
+        if row is None:
+            return None
+        return StoredAction(
+            id=row.id,
+            action_type=row.action_type,
+            target_refs=list(row.target_refs_json),
+            input_payload=dict(row.input_json),
+            proposed_output=dict(row.proposed_output_json),
+            status=row.status,
+            requires_approval=bool(row.requires_approval),
+            created_by=row.created_by,
+        )
+
+    async def execute_in(self, session: AsyncSession, action_id: str, actor: str) -> None:
+        """Run the approval-gated execute transition inside the caller's transaction.
+
+        Lets an executor commit its own output and the action's ``succeeded`` status
+        atomically; :meth:`execute` is this inside a transaction of its own."""
+        await bind_actor(session, actor)
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT status, requires_approval, proposed_output_json, target_refs_json
+                    FROM action WHERE id = CAST(:id AS uuid)
+                    FOR UPDATE
+                    """
+                ),
+                {"id": action_id},
+            )
+        ).first()
+        if row is None:
+            raise KeyError(action_id)
+        assert_can_execute(status=row.status, requires_approval=bool(row.requires_approval))
+        await session.execute(
+            text("UPDATE action SET status = 'running' WHERE id = CAST(:id AS uuid)"),
+            {"id": action_id},
+        )
+        result = {
+            "format": dict(row.proposed_output_json).get("format", "json"),
+            "status": "generated",
+            "actor": actor,
+            "target_refs": list(row.target_refs_json),
+        }
+        await session.execute(
+            text(
+                """
+                INSERT INTO action_run(action_id, result_json)
+                VALUES (CAST(:id AS uuid), CAST(:result AS jsonb))
+                """
+            ),
+            {"id": action_id, "result": json.dumps(result, sort_keys=True)},
+        )
+        await session.execute(
+            text(
+                """
+                UPDATE action
+                SET status = 'succeeded',
+                    proposed_output_json = CAST(:output AS jsonb)
+                WHERE id = CAST(:id AS uuid)
+                """
+            ),
+            {
+                "id": action_id,
+                "output": json.dumps({**dict(row.proposed_output_json), "status": "generated"}),
+            },
+        )
+        await self._audit(
+            session,
+            actor=actor,
+            action="execute",
+            target_id=action_id,
+            after={"status": "succeeded"},
+        )
 
     async def _transition(
         self,
