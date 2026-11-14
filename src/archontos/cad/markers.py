@@ -12,18 +12,24 @@ Pure functions, no network, no database. Three steps:
 
 Plan -> power-cad ``cad_create_many`` mapping
 ---------------------------------------------
-``to_power_cad_payload(plan)`` returns ``{"layers": [...], "items": [...]}``:
+Checked against the power-cad source (``dotnet/PowerCad.Server/CadTools.cs`` ``CreateMany`` and
+``dotnet/PowerCad.Core/Commands/{CommandDispatcher.Bulk,CreateSpec}.cs``, repo HEAD
+``845f63a4``). ``to_power_cad_payload(plan)`` returns the tool arguments
+``{"layers": [...], "entities": [...], "xdata_app": "ARCHONTOS"}``:
 
-* ``layers``: one entry ``{"name": "ARCHONTOS-ISSUE", "color": 7}`` (create the layer if absent).
-* ``items``: three entities per marker, in plan order, all with ``"layer": plan["layer"]``:
-  ``{"type": "circle", "center": [x, y], "radius": r, "color": 1|2}``,
-  ``{"type": "line", "start": [x, y], "end": [x, y], "color": 1|2}`` (the leader) and
-  ``{"type": "mtext", "insert": [x, y], "text": "[FAIL] rule: text", "height": h, "color": 1|2}``.
-  Each item also carries ``"xdata": {"app": "ARCHONTOS", "issue_id": ..., "outcome": ...}`` so the
-  marker can be found and removed again. Colors are AutoCAD Color Index values: FAIL red = 1,
-  REVIEW yellow = 2. Entity types are the ``cad_create`` types (line, circle, mtext). The caller
-  adds the document binding and ``dry_run`` flags; the lead should adapt key names if the live
-  ``cad_create_many`` schema differs. Nothing here talks to AutoCAD.
+* ``layers``: ``[{"name": "ARCHONTOS-ISSUE", "color": 7}]`` (created only when missing).
+* ``entities``: three per marker, in plan order, all with ``"layer": plan["layer"]``:
+  ``{"type": "circle", "center": [x, y], "radius": r, "color": 1|2, "hs": {...}}``,
+  ``{"type": "line", "start": [x, y], "end": [x, y], "color": 1|2, "hs": {...}}`` (the leader) and
+  ``{"type": "mtext", "position": [x, y], "text": "[FAIL] rule: text", "height": h,
+  "justify": "BL", "color": 1|2, "hs": {...}}``. Unknown keys are rejected by power-cad
+  (``AllowOnly``), so the MTEXT insert point is ``position`` (not ``insert``) and the attachment is
+  ``justify`` (bottom-left, like the DXF writer).
+* ``hs``: per-entity XData tags ``{"issue_id": ..., "outcome": ...}``, stored under the XData
+  application named by ``xdata_app`` (``ARCHONTOS``) so markers can be found with ``cad_query``
+  xdata filters and removed again. Colors are AutoCAD Color Index values: FAIL red = 1,
+  REVIEW yellow = 2. MTEXT text is escaped like the DXF writer (power-cad does not escape).
+  The caller adds the document binding and ``dry_run`` flags. Nothing here talks to AutoCAD.
 
 Determinism
 -----------
@@ -50,6 +56,8 @@ from typing import Any, Literal
 
 MARKER_LAYER = "ARCHONTOS-ISSUE"
 PLAN_VERSION = "archontos-cad-markers/1"
+#: XData application name for marker tags (power-cad: letters, digits, ``_-$``).
+XDATA_APP = "ARCHONTOS"
 #: AutoCAD Color Index per outcome: FAIL red, REVIEW yellow.
 OUTCOME_COLORS: dict[str, int] = {"FAIL": 1, "REVIEW": 2}
 #: Default label text height per drawing unit (about 2.5 mm paper text at 1:100).
@@ -196,44 +204,49 @@ def build_marker_plan(
 
 
 def to_power_cad_payload(plan: dict[str, Any]) -> dict[str, Any]:
-    """Map a marker plan to a power-cad ``cad_create_many`` payload (see the module docstring)."""
+    """Map a marker plan to power-cad ``cad_create_many`` arguments (see the module docstring)."""
     layer = str(plan["layer"])
-    items: list[dict[str, Any]] = []
+    entities: list[dict[str, Any]] = []
     for m in plan["markers"]:
-        tag = {"app": "ARCHONTOS", "issue_id": m["issue_id"], "outcome": m["outcome"]}
+        tag = {"issue_id": m["issue_id"], "outcome": m["outcome"]}
         c, leader, t = m["circle"], m["leader"], m["mtext"]
-        items.append(
+        entities.append(
             {
                 "type": "circle",
                 "layer": layer,
                 "center": list(c["center"]),
                 "radius": c["radius"],
                 "color": c["color"],
-                "xdata": dict(tag),
+                "hs": dict(tag),
             }
         )
-        items.append(
+        entities.append(
             {
                 "type": "line",
                 "layer": layer,
                 "start": list(leader["start"]),
                 "end": list(leader["end"]),
                 "color": leader["color"],
-                "xdata": dict(tag),
+                "hs": dict(tag),
             }
         )
-        items.append(
+        entities.append(
             {
                 "type": "mtext",
                 "layer": layer,
-                "insert": list(t["insert"]),
-                "text": t["text"],
+                "position": list(t["insert"]),
+                "text": _escape_mtext(t["text"]),
                 "height": t["height"],
+                "justify": "BL",
                 "color": t["color"],
-                "xdata": dict(tag),
+                "hs": dict(tag),
             }
         )
-    return {"layers": [{"name": layer, "color": 7}], "items": items}
+    return {
+        "layers": [{"name": layer, "color": 7}],
+        "entities": entities,
+        "xdata_app": XDATA_APP,
+    }
 
 
 def _escape_mtext(text: str) -> str:

@@ -86,6 +86,7 @@ as canonical JSON and self-contained HTML, stores both as new artifacts, links t
 
 ## Limits
 
-* `to_power_cad_payload` key names have not been checked against the live power-cad
-  `cad_create_many` schema; adapt before sending it to AutoCAD.
+* `to_power_cad_payload` follows the power-cad `cad_create_many` source (commit 845f63a4:
+  `entities`, `hs` XData tags, `xdata_app`, mtext `position`/`justify`); a vendored schema
+  snapshot guards it in `tests/contracts/`. It has not been run against a live AutoCAD.
 * Markers are DXF-only; IFC/SketchUp revisions get BCF instead.
