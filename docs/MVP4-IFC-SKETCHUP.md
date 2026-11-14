@@ -112,7 +112,34 @@ for such a revision gets 422, because the model is the source.
 - Link ids are uuid5 values over the ordered pair and the method. Rows are append-only (the
   `cad_reject_mutation` trigger, and `archontos_app` has SELECT/INSERT only). Links use the
   same fail-closed jurisdiction RLS as `cad_artifact`.
-- DXF objects only have a `dxf_handle`, which is not shared, so they are linked manually.
+- DXF objects only have a `dxf_handle`, which is not shared. They are linked to IFC objects
+  by geometry (below) or manually.
+
+### Geometric links (P2, migration 022, `src/archontos/cad/geolink.py`)
+
+When a DXF or IFC revision is ingested, it is matched against the IFC / DXF revisions with the
+same `project_id`, jurisdiction and `revision_label`:
+
+- Only the same `kind` is compared (`wall`, `door`, `window`, `space`, `stair`, `column`,
+  `opening`; `slab` is IFC-only). Geometry is the stored `geometry_json`, which both parsers
+  already normalise to metres (`$INSUNITS` / IFC length unit), so a mm drawing and a metre IFC
+  compare directly.
+- Score: plan bboxes grown by `tolerance/2` (default tolerance 0.3 m, so points get an area);
+  `confidence = 0.6 * IoU + 0.4 * max(0, 1 - centroid distance / tolerance)`. A pair is kept
+  when the centroid distance is within the tolerance or IoU >= 0.5, and confidence >= 0.5.
+- Matching is one-to-one, greedy by confidence (ties by ids), deterministic.
+- Rows: `method = 'geometric'`, `confidence` (0..1, required for geometric, NULL otherwise),
+  `note = "kind=... iou=... d=...m"`. Objects that already have a `manual` or `shared_ref` link
+  in either revision are never auto-linked, and existing links are never changed (append-only).
+  `GET /v1/models/links?method=geometric` lists them; each link carries `confidence`.
+
+### Openings (`IfcOpeningElement`, IFC parser `ifc-1.2`)
+
+`IfcOpeningElement` (and `IfcOpeningStandardCase`) is now read as kind `opening` with
+`width`/`height`/`depth` from `Qto_OpeningElementBaseQuantities`, `host_ref` (the voided
+wall/slab, `IfcRelVoidsElement`) and `filler_refs` (doors/windows, `IfcRelFillsElement`).
+Doors and windows gain `opening_ref` next to `host_ref`. The parser version bump gives IFC
+revisions new parser revisions (existing objects are not rewritten).
 
 ## SketchUp export contract `archontos-skp-export/1`
 

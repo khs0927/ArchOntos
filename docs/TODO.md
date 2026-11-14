@@ -35,7 +35,6 @@
 
 ## P2 — 기능 보완
 
-- [ ] DXF↔IFC 형상 기반 자동 링크, IfcOpeningElement 처리
 - [ ] SketchUp Ruby exporter 스크립트, Revit→IFC 자동화
 
 ## P3 — 운영

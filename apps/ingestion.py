@@ -632,7 +632,7 @@ async def list_model_links(
     project_id: Annotated[str | None, Query(max_length=200)] = None,
     revision_id: UUID | None = None,
     object_id: UUID | None = None,
-    method: Annotated[str | None, Query(pattern=r"^(shared_ref|manual)$")] = None,
+    method: Annotated[str | None, Query(pattern=r"^(shared_ref|manual|geometric)$")] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     cursor: str | None = None,
 ):

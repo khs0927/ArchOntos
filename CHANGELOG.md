@@ -11,6 +11,11 @@
     marker action; plan in model coordinates; execute writes a NEW IFC4 annotation file
     (`IfcAnnotation` in an `IfcGroup`, `bim` extra) or a SketchUp overlay JSON
     `archontos-skp-markers/1`. The original model is never modified.
+  - Migration 022: `model_object_link.method` accepts `geometric` with a required
+    `confidence`. DXF <-> IFC revisions of the same project / revision label are linked at
+    ingest by kind + bbox IoU / centroid distance in metres (`archontos.cad.geolink`); manual and
+    shared_ref links always win. IFC parser `ifc-1.2` maps `IfcOpeningElement` (kind `opening`,
+    `host_ref`, `filler_refs`); doors/windows gain `opening_ref`.
 
 - P0 real-data verification:
   - Local PostgreSQL integration run (pgvector/pgvector:pg18, throwaway container): full suite

@@ -22,7 +22,7 @@ from archontos.cad.model import (
     build_model_drawing,
 )
 
-IFC_PARSER_VERSION = "ifc-1.1"  # 1.1: door/window host_ref
+IFC_PARSER_VERSION = "ifc-1.2"  # 1.1: door/window host_ref; 1.2: IfcOpeningElement
 
 #: IFC SI prefixes -> factor.
 SI_PREFIXES: dict[str | None, float] = {
@@ -56,6 +56,7 @@ _FAMILIES: tuple[tuple[str, str], ...] = (
     (r"^IfcStair", "stair"),
     (r"^IfcColumn", "column"),
     (r"^IfcSlab", "slab"),
+    (r"^IfcOpening", "opening"),
 )
 
 #: (target property, dimension 0=count/1=length/2=area/3=volume, candidate IFC names).
@@ -98,6 +99,11 @@ QUANTITY_SPECS: dict[str, tuple[tuple[str, int, tuple[str, ...]], ...]] = {
         ("depth", 1, ("Depth",)),
         ("area", 2, ("CrossSectionArea",)),
         ("volume", 3, ("NetVolume", "GrossVolume")),
+    ),
+    "opening": (
+        ("width", 1, ("Width",)),
+        ("height", 1, ("Height",)),
+        ("depth", 1, ("Depth",)),
     ),
     "slab": (
         ("area", 2, ("NetArea", "GrossArea")),
@@ -318,6 +324,17 @@ def host_refs(item: Any) -> list[str]:
     return sorted(hosts)
 
 
+def opening_refs(item: Any) -> list[str]:
+    """GlobalIds of the IfcOpeningElements a door/window fills (IfcRelFillsElement)."""
+    return sorted(
+        {
+            str(fills.RelatingOpeningElement.GlobalId)
+            for fills in getattr(item, "FillsVoids", None) or ()
+            if fills.RelatingOpeningElement is not None
+        }
+    )
+
+
 def _element(item: Any, scales: dict[int, float], storey_names: dict[int, str]) -> ModelElement:
     import ifcopenshell.util.element as eu
 
@@ -354,6 +371,25 @@ def _element(item: Any, scales: dict[int, float], storey_names: dict[int, str]) 
             attributes["host_ref"] = hosts[0]
         elif hosts:
             attributes["host_ref"] = hosts
+        openings = opening_refs(item)
+        if openings:
+            attributes["opening_ref"] = openings[0] if len(openings) == 1 else openings
+    elif family == "opening":
+        # IfcRelVoidsElement -> host (wall/slab); IfcRelFillsElement -> filler (door/window).
+        voided = sorted(
+            str(rel.RelatingBuildingElement.GlobalId)
+            for rel in getattr(item, "VoidsElements", None) or ()
+            if rel.RelatingBuildingElement is not None
+        )
+        if voided:
+            attributes["host_ref"] = voided[0] if len(voided) == 1 else voided
+        fillers = sorted(
+            str(rel.RelatedBuildingElement.GlobalId)
+            for rel in getattr(item, "HasFillings", None) or ()
+            if rel.RelatedBuildingElement is not None
+        )
+        if fillers:
+            attributes["filler_refs"] = fillers
     xs = [p[0] for p in footprint] if footprint else []
     ys = [p[1] for p in footprint] if footprint else []
     return ModelElement(
@@ -418,7 +454,11 @@ def parse_ifc(
         "IfcBuiltElement" if model.schema.upper().startswith("IFC4X3") else ("IfcBuildingElement")
     )
     try:
-        items = list(model.by_type(building_class)) + list(model.by_type("IfcSpace"))
+        items = (
+            list(model.by_type(building_class))
+            + list(model.by_type("IfcSpace"))
+            + list(model.by_type("IfcOpeningElement"))
+        )
     except RuntimeError as exc:
         raise CadParseError(f"unsupported IFC schema {model.schema}: {exc}") from exc
     elements = []
