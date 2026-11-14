@@ -30,6 +30,12 @@ from archontos.cad.report import (
 from archontos.storage.artifacts import ArtifactRef
 
 MARKER_ACTION_TYPE = "CadMarkersExport"
+#: source_format -> (output format, media type, file suffix) of the marker artifact.
+MARKER_FORMATS: dict[str, tuple[str, str, str]] = {
+    "dxf": ("dxf", "image/vnd.dxf", ".dxf"),
+    "ifc": ("ifc", "application/x-step", ".ifc"),
+    "skp_json": ("skp_markers_json", "application/json", ".json"),
+}
 
 
 def output_id_for(kind: str, *parts: str) -> str:
@@ -325,10 +331,15 @@ async def record_output(
 async def marker_plan_for_run(
     session: AsyncSession, run: dict[str, Any], revision: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
-    """Marker plan (drawing units) for the run's current ``open`` issues with geometry."""
-    if revision.get("source_format", "dxf") != "dxf":
-        raise MarkerError("markers can only be written to DXF revisions")
-    units = str(revision["units"])
+    """Marker plan for the run's current ``open`` issues with geometry.
+
+    DXF: drawing units. IFC / SketchUp JSON: model coordinates in metres (``units = "m"``),
+    exported as an IFC annotation file or a SketchUp overlay (``model_markers.py``).
+    """
+    source_format = revision.get("source_format", "dxf") or "dxf"
+    if source_format not in MARKER_FORMATS:
+        raise MarkerError(f"markers are not supported for {source_format} revisions")
+    units = "m" if source_format != "dxf" else str(revision["units"])
     if units not in DEFAULT_TEXT_HEIGHT or units not in UNIT_FACTORS:
         raise MarkerError(f"unsupported drawing units for markers: {units}")
     factor = float(UNIT_FACTORS[units])  # metres per drawing unit

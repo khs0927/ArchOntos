@@ -7,6 +7,10 @@
     `building.use_group`, `building.floor_count`, `building.basement_count` and
     `sheet.storey_label` from INSERT attributes or TEXT/MTEXT on title-block layers; stored in
     `model_meta_json.building_info`; fail-closed on missing or conflicting values.
+  - Markers for IFC and SketchUp revisions (`archontos.cad.model_markers`): same four-eyes
+    marker action; plan in model coordinates; execute writes a NEW IFC4 annotation file
+    (`IfcAnnotation` in an `IfcGroup`, `bim` extra) or a SketchUp overlay JSON
+    `archontos-skp-markers/1`. The original model is never modified.
 
 - P0 real-data verification:
   - Local PostgreSQL integration run (pgvector/pgvector:pg18, throwaway container): full suite

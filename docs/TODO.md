@@ -35,7 +35,6 @@
 
 ## P2 — 기능 보완
 
-- [ ] IFC·SketchUp 리비전에도 도면 마커 적용 — 지금은 DXF만, 나머지는 BCF로만
 - [ ] DXF↔IFC 형상 기반 자동 링크, IfcOpeningElement 처리
 - [ ] SketchUp Ruby exporter 스크립트, Revit→IFC 자동화
 

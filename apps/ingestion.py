@@ -30,8 +30,10 @@ from archontos.cad.issue_persistence import CadIssueRepository, RunNotFound
 from archontos.cad.links import LinkInputError, ModelLinkRepository
 from archontos.cad.markers import MarkerError, apply_markers_to_dxf, to_power_cad_payload
 from archontos.cad.model import UnsupportedModelFormat, building_facts, detect_source_format
+from archontos.cad.model_markers import skp_overlay_bytes, write_ifc_markers
 from archontos.cad.outputs import (
     MARKER_ACTION_TYPE,
+    MARKER_FORMATS,
     DiffNotFound,
     build_report,
     find_marker_output,
@@ -918,6 +920,7 @@ async def propose_cad_markers(run_id: UUID):
             plan, issue_ids = await marker_plan_for_run(session, run, revision)
         except MarkerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        source_format = str(revision.get("source_format") or "dxf")
     proposal = ProposedAction(
         action_type=MARKER_ACTION_TYPE,
         target_refs=[f"cad_check_run:{run['id']}", f"cad_revision:{run['revision_id']}"],
@@ -926,13 +929,14 @@ async def propose_cad_markers(run_id: UUID):
             "revision_id": run["revision_id"],
             "issue_ids": issue_ids,
             "plan": plan,
+            "source_format": source_format,
         },
         proposed_output={
-            "format": "dxf",
+            "format": MARKER_FORMATS[source_format][0],
             "status": "proposal",
             "plan_sha256": plan["sha256"],
             "marker_count": len(plan["markers"]),
-            "power_cad_payload": to_power_cad_payload(plan),
+            **({"power_cad_payload": to_power_cad_payload(plan)} if source_format == "dxf" else {}),
         },
         requires_approval=True,
     )
@@ -970,12 +974,23 @@ async def execute_cad_markers(action_id: UUID):
             uri = await revision_source_uri(session, inputs["revision_id"])
             if uri is None:
                 raise HTTPException(status_code=404, detail="CAD revision not found")
-            original = await store.get_bytes(uri)
+            source_format = str(inputs.get("source_format") or "dxf")
+            out_format, media_type, suffix = MARKER_FORMATS[source_format]
             try:
-                data = apply_markers_to_dxf(original, inputs["plan"])
-            except (CadParseError, CadDependencyError) as exc:
+                if source_format == "dxf":
+                    data = apply_markers_to_dxf(await store.get_bytes(uri), inputs["plan"])
+                else:
+                    # Model markers are a separate overlay file; the original is not touched.
+                    revision = await CadRepository(session).get_revision(inputs["revision_id"])
+                    source_sha = (revision or {}).get("sha256")
+                    data = (
+                        write_ifc_markers(inputs["plan"], source_sha256=source_sha)
+                        if source_format == "ifc"
+                        else skp_overlay_bytes(inputs["plan"], source_sha256=source_sha)
+                    )
+            except (CadParseError, CadDependencyError, MarkerError) as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-            ref = await store.put_bytes("cad-markers", data, mime="image/vnd.dxf", suffix=".dxf")
+            ref = await store.put_bytes("cad-markers", data, mime=media_type, suffix=suffix)
             art_id = await insert_artifact(session, ref)
             existing, created = await record_output(
                 session,
@@ -987,8 +1002,12 @@ async def execute_cad_markers(action_id: UUID):
                 action_id=str(action_id),
                 issue_ids=list(inputs["issue_ids"]),
                 sha256=ref.content_hash,
-                media_type="image/vnd.dxf",
-                meta={"plan_sha256": inputs["plan"]["sha256"], "source_storage_uri": uri},
+                media_type=media_type,
+                meta={
+                    "plan_sha256": inputs["plan"]["sha256"],
+                    "source_storage_uri": uri,
+                    "format": out_format,
+                },
                 jurisdiction_code=run["jurisdiction_code"],
                 topic="cad.markers-exported",
                 event_type="CadMarkersExported",
