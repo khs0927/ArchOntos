@@ -901,53 +901,58 @@ async def propose_cad_markers(run_id: UUID):
 
 @app.post("/v1/cad/markers/{action_id}/execute", dependencies=[require(Permission.ACTION_EXECUTE)])
 async def execute_cad_markers(action_id: UUID):
-    """Execute an APPROVED marker action: write a new DXF artifact; the original is untouched."""
+    """Execute an APPROVED marker action: write a new DXF artifact; the original is untouched.
+
+    The output artifact link (with its outbox/audit rows) and the action's ``succeeded`` status
+    are committed in ONE database transaction, guarded by a row lock on the action, so there is
+    no state with an output but a still-approved action (or the reverse). Re-running returns the
+    stored output."""
     actions = PostgresActionStore(get_session_factory())
-    found = await actions.get(str(action_id))
-    if found is None or found.action_type != MARKER_ACTION_TYPE:
-        raise HTTPException(status_code=404, detail="marker action not found")
-    if found.status != "succeeded":
-        try:
-            assert_can_execute(status=found.status, requires_approval=found.requires_approval)
-        except ApprovalDenied as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    inputs = found.input_payload
+    actor = current_actor(default="anonymous")
     store = _artifact_store()
+    created = False
     async with get_session_factory()() as session, session.begin():
+        found = await actions.lock(session, str(action_id))
+        if found is None or found.action_type != MARKER_ACTION_TYPE:
+            raise HTTPException(status_code=404, detail="marker action not found")
         existing = await find_marker_output(session, str(action_id))
-        if existing is not None:
-            return {"created": False, "output": existing, "action": found.as_api()}
-        run = await _run_or_404(session, UUID(inputs["run_id"]))
-        uri = await revision_source_uri(session, inputs["revision_id"])
-        if uri is None:
-            raise HTTPException(status_code=404, detail="CAD revision not found")
-        original = await store.get_bytes(uri)
-        try:
-            data = apply_markers_to_dxf(original, inputs["plan"])
-        except (CadParseError, CadDependencyError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        ref = await store.put_bytes("cad-markers", data, mime="image/vnd.dxf", suffix=".dxf")
-        art_id = await insert_artifact(session, ref)
-        link, _ = await record_output(
-            session,
-            output_id=output_id_for("markers", str(action_id)),
-            kind="markers",
-            artifact_id=art_id,
-            run_id=run["id"],
-            revision_id=inputs["revision_id"],
-            action_id=str(action_id),
-            issue_ids=list(inputs["issue_ids"]),
-            sha256=ref.content_hash,
-            media_type="image/vnd.dxf",
-            meta={"plan_sha256": inputs["plan"]["sha256"], "source_storage_uri": uri},
-            jurisdiction_code=run["jurisdiction_code"],
-            topic="cad.markers-exported",
-            event_type="CadMarkersExported",
-        )
-    executed = found
-    if found.status != "succeeded":
-        try:
-            executed = await actions.execute(str(action_id), current_actor(default="anonymous"))
-        except ApprovalDenied as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"created": True, "output": link, "action": executed.as_api()}
+        if found.status != "succeeded":
+            try:
+                assert_can_execute(status=found.status, requires_approval=found.requires_approval)
+            except ApprovalDenied as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if existing is None:
+            inputs = found.input_payload
+            run = await _run_or_404(session, UUID(inputs["run_id"]))
+            uri = await revision_source_uri(session, inputs["revision_id"])
+            if uri is None:
+                raise HTTPException(status_code=404, detail="CAD revision not found")
+            original = await store.get_bytes(uri)
+            try:
+                data = apply_markers_to_dxf(original, inputs["plan"])
+            except (CadParseError, CadDependencyError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            ref = await store.put_bytes("cad-markers", data, mime="image/vnd.dxf", suffix=".dxf")
+            art_id = await insert_artifact(session, ref)
+            existing, created = await record_output(
+                session,
+                output_id=output_id_for("markers", str(action_id)),
+                kind="markers",
+                artifact_id=art_id,
+                run_id=run["id"],
+                revision_id=inputs["revision_id"],
+                action_id=str(action_id),
+                issue_ids=list(inputs["issue_ids"]),
+                sha256=ref.content_hash,
+                media_type="image/vnd.dxf",
+                meta={"plan_sha256": inputs["plan"]["sha256"], "source_storage_uri": uri},
+                jurisdiction_code=run["jurisdiction_code"],
+                topic="cad.markers-exported",
+                event_type="CadMarkersExported",
+            )
+        if found.status != "succeeded":
+            await actions.execute_in(session, str(action_id), actor)
+    executed = await actions.get(str(action_id))
+    if executed is None:
+        raise HTTPException(status_code=404, detail="marker action not found")
+    return {"created": created, "output": existing, "action": executed.as_api()}
