@@ -16,6 +16,10 @@
     ingest by kind + bbox IoU / centroid distance in metres (`archontos.cad.geolink`); manual and
     shared_ref links always win. IFC parser `ifc-1.2` maps `IfcOpeningElement` (kind `opening`,
     `host_ref`, `filler_refs`); doors/windows gain `opening_ref`.
+  - `tools/sketchup/archontos_export.rb`: read-only SketchUp Ruby exporter for
+    `archontos-skp-export/1` (mm, world bbox/transform, IFC classification GUIDs, storeys);
+    contract test against `tools/sketchup/sample_export.json`. Revit -> IFC recommended export
+    settings documented in docs/MVP4-IFC-SKETCHUP.md (no Revit automation code).
 
 - P0 real-data verification:
   - Local PostgreSQL integration run (pgvector/pgvector:pg18, throwaway container): full suite

@@ -35,7 +35,8 @@
 
 ## P2 — 기능 보완
 
-- [ ] SketchUp Ruby exporter 스크립트, Revit→IFC 자동화
+(남은 항목 없음 — 2026-11-14 PR #28에서 완료: 도곽 사실, IFC·SketchUp 마커, DXF↔IFC 형상 링크,
+SketchUp exporter / Revit→IFC 가이드. CHANGELOG 참조)
 
 ## P3 — 운영
 

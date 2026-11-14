@@ -187,13 +187,48 @@ rejects unknown keys. The first violation is reported as 422 with its JSON path.
 | `quantities` | no | `{name: {value, unit}}` with unit `mm`…`ft3`, `deg`, `rad` or `count`. Normalised and preferred over values derived from the bbox. |
 | `storeys[]` | no | `{name, elevation}` (elevation in `model.units`). Gives the `building.*` facts. |
 
-### Future producers (not called by this service)
+### SketchUp exporter (`tools/sketchup/archontos_export.rb`)
 
-The SketchUp MCP servers on the workstation (`sketchup`, `sketchup-mcp2`, `hueflow`,
-`execute_ruby` / `eval_ruby`) can produce this JSON with a short Ruby script that walks
-`model.entities`. The Revit MCP servers (`rvt-mcp` `revit_export_ifc`, `horizun-revit`) can
-export IFC. Both feed `POST /v1/cad/artifacts`. ArchOntos never calls them; the user's tools
-push files to the API.
+A small, read-only Ruby script that writes this contract:
+
+```ruby
+load 'C:/path/to/ArchOntos/tools/sketchup/archontos_export.rb'
+ArchOntos::SkpExport.export('C:/temp/model.archontos.json')
+```
+
+It runs in the SketchUp Ruby console or through a SketchUp MCP `execute_ruby` / `eval_ruby`
+call. Lengths are written in `mm` (converted from SketchUp inches). Every visible Group /
+ComponentInstance is exported with its world bbox and transform; nested ones are flattened,
+except inside IFC-classified or door/window components. `ifc_type` / `ifc_guid` come from the
+IFC classification (`AppliedSchemaTypes`, `IFC 4` / `IFC 2x3` → `GlobalId`). `storey` comes
+from the entity attribute `archontos/storey`. `storeys` come from the model attribute
+`archontos/storeys` (JSON list of `{name, elevation}` in mm). Groups with a horizontal face also
+get a `footprint`. The script cannot run in CI: `tests/test_skp_exporter_contract.py` validates
+`tools/sketchup/sample_export.json` (its output for the documented fixture room) against the
+schema and checks that the Ruby emits only contract keys.
+
+### Revit → IFC (recommended export setup; no Revit automation in this repo)
+
+Export from Revit (File → Export → IFC, or the open-source *IFC Exporter for Revit*) with:
+
+| Setting | Value | Why |
+|---|---|---|
+| IFC version | IFC4 Reference View (or IFC2x3 Coordination View 2.0) | both parsed; IFC4 preferred |
+| Space boundaries | none | not used |
+| Export base quantities | **on** | `Qto_*BaseQuantities` give widths, areas, heights |
+| Split walls/columns by level | on | one storey per element |
+| Export rooms / spaces | **on** (3D view or "Export rooms in 3D views") | `IfcSpace` with `LongName` = room name |
+| Include IFC openings / "Export openings as separate entities" | **on** | `IfcOpeningElement` + `IfcRelVoidsElement` / `IfcRelFillsElement` give door/window hosts |
+| Store the IFC GUID in an element parameter after export | **on** | keeps GlobalIds stable across exports (shared_ref links, BCF) |
+| Coordinates | Shared coordinates / survey point | same origin as the DXF sheets so geometric links match |
+| Project units | mm (any SI length unit is fine) | converted to metres on import |
+| Levels | name them like the drawings (`B1`, `1F`, ...) | storeys -> `building.*` facts, stair pairing |
+
+Use the same `revision_label` for the Revit IFC and the DXF sheets of one design revision so
+`geometric` links are created. No pyRevit or Dynamo script is needed; if you automate the export
+on the workstation, the Revit MCP servers (`rvt-mcp` `revit_export_ifc`, `horizun-revit`) can
+call the same exporter. ArchOntos never calls them; the user's tools push files to
+`POST /v1/cad/artifacts`.
 
 ## Verification
 
