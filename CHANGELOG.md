@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- P2 remaining items:
+  - DXF title-block facts (`archontos.cad.building_info`, rules `kr-titleblock-2026.11`):
+    `building.use_group`, `building.floor_count`, `building.basement_count` and
+    `sheet.storey_label` from INSERT attributes or TEXT/MTEXT on title-block layers; stored in
+    `model_meta_json.building_info`; fail-closed on missing or conflicting values.
+  - Markers for IFC and SketchUp revisions (`archontos.cad.model_markers`): same four-eyes
+    marker action; plan in model coordinates; execute writes a NEW IFC4 annotation file
+    (`IfcAnnotation` in an `IfcGroup`, `bim` extra) or a SketchUp overlay JSON
+    `archontos-skp-markers/1`. The original model is never modified.
+  - Migration 022: `model_object_link.method` accepts `geometric` with a required
+    `confidence`. DXF <-> IFC revisions of the same project / revision label are linked at
+    ingest by kind + bbox IoU / centroid distance in metres (`archontos.cad.geolink`); manual and
+    shared_ref links always win. IFC parser `ifc-1.2` maps `IfcOpeningElement` (kind `opening`,
+    `host_ref`, `filler_refs`); doors/windows gain `opening_ref`.
+  - `tools/sketchup/archontos_export.rb`: read-only SketchUp Ruby exporter for
+    `archontos-skp-export/1` (mm, world bbox/transform, IFC classification GUIDs, storeys);
+    contract test against `tools/sketchup/sample_export.json`. Revit -> IFC recommended export
+    settings documented in docs/MVP4-IFC-SKETCHUP.md (no Revit automation code).
+
 - P0 real-data verification:
   - Local PostgreSQL integration run (pgvector/pgvector:pg18, throwaway container): full suite
     444 passed, 1 skipped (2026-11-14, DESKTOP-KTQHS1I).

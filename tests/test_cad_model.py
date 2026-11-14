@@ -328,7 +328,11 @@ def test_ifc_model_import():
     assert drawing.source_format == "ifc" and drawing.dxf_version == "IFC4"
     assert drawing.units == "mm"
     objs = _by_kind(drawing)
-    assert sorted(objs) == ["door", "slab", "space", "stair", "wall"]
+    assert sorted(objs) == ["door", "opening", "slab", "space", "stair", "wall"]
+    # P2: IfcOpeningElement is mapped and associated with its host and filler.
+    assert objs["opening"].properties["host_ref"] == WALL_GUID
+    assert objs["opening"].properties["filler_refs"] == [DOOR_GUID]
+    assert objs["door"].properties["opening_ref"] == objs["opening"].source_handles[0]
     assert drawing.unmapped_entity_count == 1  # the beam; the IfcStair container is skipped
     assert objs["door"].properties["width"] == {"value": 0.9, "unit": "m"}
     assert objs["door"].source_handles == (DOOR_GUID,)

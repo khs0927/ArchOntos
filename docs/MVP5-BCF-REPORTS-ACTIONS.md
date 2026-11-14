@@ -84,9 +84,23 @@ as canonical JSON and self-contained HTML, stores both as new artifacts, links t
    (row lock on the action; a failure leaves no output and the action stays approved). The original artifact is never
    written. The generic `POST /v1/actions/{id}/execute` refuses marker actions (409).
 
+IFC and SketchUp JSON revisions use the same proposal / four-eyes / execute gate
+(`src/archontos/cad/model_markers.py`). Their plan is in model coordinates (metres, `units: m`)
+and the action stores `source_format`. Execute writes, besides the BCF viewpoints the issues
+already have:
+
+| Revision | Output (`cad_issue_artifact` kind `markers`, `meta.format`) |
+|---|---|
+| `dxf` | new DXF copy with the `ARCHONTOS-ISSUE` layer (`dxf`); proposal includes the power-cad payload |
+| `ifc` | NEW standalone IFC4 file `archontos-ifc-markers/1` (`ifc`, `application/x-step`): one `IfcAnnotation` per marker (circle + leader `IfcPolyline`s, `Pset_ArchOntosIssue` with `IssueId`, `Outcome`, `Label`, `ElementGlobalId`) in one `IfcGroup` "ArchOntos issues". Needs the `bim` extra; the original IFC is not read or changed. |
+| `skp_json` | SketchUp overlay JSON `archontos-skp-markers/1` (`skp_markers_json`), validated by `SKP_MARKERS_SCHEMA`: `{schema, units: "m", tag, plan_sha256, source_sha256, markers: [{issue_id, outcome, persistent_id, color [r,g,b], center [x,y,0], radius, leader {start,end}, label {position,text}, text_height}]}` |
+
+Both model outputs are deterministic (uuid5 GlobalIds, fixed IFC header timestamp, canonical JSON).
+
 ## Limits
 
 * `to_power_cad_payload` follows the power-cad `cad_create_many` source (commit 845f63a4:
   `entities`, `hs` XData tags, `xdata_app`, mtext `position`/`justify`); a vendored schema
   snapshot guards it in `tests/contracts/`. It has not been run against a live AutoCAD.
-* Markers are DXF-only; IFC/SketchUp revisions get BCF instead.
+* IFC / SketchUp markers are overlay files, not edits of the model: the IFC annotation file is
+  federated next to the original, the SketchUp overlay needs a SketchUp-side script to draw it.

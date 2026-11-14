@@ -157,3 +157,29 @@ async def test_ifc_and_skp_are_linked_by_guid(client):
     async with factory() as session, session.begin():
         with pytest.raises(DBAPIError):
             await session.execute(text("UPDATE model_object_link SET note = 'x'"))
+
+
+async def test_dxf_and_ifc_are_linked_by_geometry(client):
+    """P2 / migration 022: same project + revision label, DXF <-> IFC by kind and overlap."""
+    pytest.importorskip("ifcopenshell")
+    pytest.importorskip("ezdxf")
+    from tests.cad_fixtures import korean_plan
+    from tests.model_fixtures import tiny_ifc
+
+    http, factory, _store = client
+    ifc = await _upload(http, tiny_ifc(), "G-IFC", "G1", "application/x-step")
+    assert ifc.status_code == 201, ifc.text
+    dxf = await _upload(http, korean_plan(), "G-DXF", "G1", "application/octet-stream")
+    assert dxf.status_code == 201, dxf.text
+    links = (
+        await http.get("/v1/models/links", params={"project_id": "P-4", "method": "geometric"})
+    ).json()["items"]
+    kinds = sorted(link["object_a_kind"] for link in links)
+    assert "door" in kinds and "space" in kinds
+    for link in links:
+        assert link["object_a_kind"] == link["object_b_kind"]
+        assert 0.5 <= link["confidence"] <= 1.0
+        assert {link["object_a_source_format"], link["object_b_source_format"]} == {"dxf", "ifc"}
+    # A different revision label is not linked; geometric rows obey the same append-only rule.
+    await _upload(http, korean_plan(room_name="침실"), "G-DXF", "G2", "application/octet-stream")
+    assert await count_rows(factory, "model_object_link", "method = 'geometric'") == len(links)

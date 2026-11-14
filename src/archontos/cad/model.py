@@ -340,6 +340,18 @@ def object_properties(kind: str, element: ModelElement) -> dict[str, Any]:
     if kind in ("door", "window") and host:
         # IfcRelFillsElement/IfcRelVoidsElement host (str), or a list when ambiguous.
         props["host_ref"] = host if isinstance(host, str) else sorted(str(h) for h in host)
+    opening = element.attributes.get("opening_ref")
+    if kind in ("door", "window") and opening:
+        props["opening_ref"] = (
+            opening if isinstance(opening, str) else sorted(str(o) for o in opening)
+        )
+    if kind == "opening":
+        # IfcOpeningElement: the voided host and the door/window fillers (P2).
+        if host:
+            props["host_ref"] = host if isinstance(host, str) else sorted(str(h) for h in host)
+        fillers = element.attributes.get("filler_refs")
+        if fillers:
+            props["filler_refs"] = sorted(str(f) for f in fillers)
     return props
 
 
@@ -498,7 +510,10 @@ def building_facts(model_meta: dict[str, Any] | None) -> tuple[dict[str, Any], d
     """
     storeys = (model_meta or {}).get("storeys")
     if not isinstance(storeys, list) or not storeys:
-        return {}, {}
+        # DXF: title-block values (building_info.py); fail-closed, missing -> no fact.
+        from archontos.cad.building_info import building_info_facts
+
+        return building_info_facts((model_meta or {}).get("building_info"))
     basements = sum(
         1
         for s in storeys

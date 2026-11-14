@@ -1,0 +1,64 @@
+{
+  "schema": "archontos-skp-export/1",
+  "model": {
+    "name": "sample-room",
+    "guid": "3f6c2b9e-5d6a-4b1e-9f1a-2a7d8c0e4b11",
+    "units": "mm",
+    "exporter": "archontos_export.rb 1.0",
+    "sketchup_version": "24.0.594"
+  },
+  "storeys": [
+    {"name": "1F", "elevation": 0.0},
+    {"name": "2F", "elevation": 3000.0}
+  ],
+  "entities": [
+    {
+      "persistent_id": 2001,
+      "entity_type": "Group",
+      "tag": "A-WALL",
+      "name": "W1",
+      "storey": "1F",
+      "bbox": {"min": [0.0, 0.0, 0.0], "max": [6000.0, 200.0, 2700.0]},
+      "transform": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+      "footprint": [[0.0, 0.0], [6000.0, 0.0], [6000.0, 200.0], [0.0, 200.0]]
+    },
+    {
+      "persistent_id": 2002,
+      "entity_type": "ComponentInstance",
+      "tag": "문",
+      "definition": "Door 900",
+      "ifc_type": "IfcDoor",
+      "ifc_guid": "2O2Fr$t4X7Zf8NOew3FLOH",
+      "storey": "1F",
+      "bbox": {"min": [500.0, 0.0, 0.0], "max": [1400.0, 200.0, 2100.0]},
+      "transform": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 500.0, 0.0, 0.0, 1.0]
+    },
+    {
+      "persistent_id": 2003,
+      "entity_type": "ComponentInstance",
+      "tag": "창",
+      "definition": "Window 1500",
+      "storey": "1F",
+      "bbox": {"min": [2000.0, 3800.0, 900.0], "max": [3500.0, 4000.0, 2100.0]},
+      "transform": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2000.0, 3800.0, 900.0, 1.0]
+    },
+    {
+      "persistent_id": 2004,
+      "entity_type": "Group",
+      "tag": "실",
+      "name": "거실",
+      "storey": "1F",
+      "bbox": {"min": [0.0, 0.0, 0.0], "max": [6000.0, 4000.0, 2700.0]},
+      "transform": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+      "footprint": [[0.0, 0.0], [6000.0, 0.0], [6000.0, 4000.0], [0.0, 4000.0]]
+    },
+    {
+      "persistent_id": 2005,
+      "entity_type": "ComponentInstance",
+      "tag": "Untagged",
+      "definition": "Chair",
+      "bbox": {"min": [1000.0, 1000.0, 0.0], "max": [1500.0, 1500.0, 900.0]},
+      "transform": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1000.0, 1000.0, 0.0, 1.0]
+    }
+  ]
+}

@@ -18,6 +18,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from archontos.cad.building_info import (
+    DEFAULT_BUILDING_RULES,
+    BuildingInfoRuleSet,
+    extract_building_info,
+)
 from archontos.cad.rules import DEFAULT_RULE_SET, MappingRule, MappingRuleSet
 
 PARSER_VERSION = "dxf-1.1"  # 1.1: INSERT attributes, width_source on widths
@@ -373,6 +378,7 @@ def parse_dxf(
     *,
     rule_set: MappingRuleSet = DEFAULT_RULE_SET,
     assume_units: str = "mm",
+    building_rules: BuildingInfoRuleSet = DEFAULT_BUILDING_RULES,
 ) -> ParsedDrawing:
     """Parse DXF bytes into raw entities and mapped architectural objects.
 
@@ -496,17 +502,22 @@ def parse_dxf(
             )
         )
 
-    content_digest = sha256_hex(
-        canonical_json(
-            {
-                "sha256": digest,
-                "parser_revision": revision,
-                "units": units,
-                "entities": [e.entity_hash for e in entities],
-                "objects": [o.object_hash for o in objects],
-            }
-        )
+    # Title-block facts (building_info.py): recorded only when something was found, so drawings
+    # without a title block keep their previous content digest.
+    info = extract_building_info(entities, building_rules)
+    model_meta: dict[str, Any] = (
+        {"building_info": info} if info["values"] or info["conflicts"] else {}
     )
+    digest_body: dict[str, Any] = {
+        "sha256": digest,
+        "parser_revision": revision,
+        "units": units,
+        "entities": [e.entity_hash for e in entities],
+        "objects": [o.object_hash for o in objects],
+    }
+    if model_meta:
+        digest_body["model_meta"] = model_meta
+    content_digest = sha256_hex(canonical_json(digest_body))
     return ParsedDrawing(
         sha256=digest,
         byte_size=len(data),
@@ -519,6 +530,7 @@ def parse_dxf(
         objects=tuple(objects),
         unmapped_entity_count=unmapped,
         content_digest=content_digest,
+        model_meta=model_meta,
     )
 
 

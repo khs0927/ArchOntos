@@ -35,10 +35,8 @@
 
 ## P2 — 기능 보완
 
-- [ ] 층/건물 사실(`building.use_group` 등) DXF에서 추출 — IFC는 층수만 자동
-- [ ] IFC·SketchUp 리비전에도 도면 마커 적용 — 지금은 DXF만, 나머지는 BCF로만
-- [ ] DXF↔IFC 형상 기반 자동 링크, IfcOpeningElement 처리
-- [ ] SketchUp Ruby exporter 스크립트, Revit→IFC 자동화
+(남은 항목 없음 — 2026-11-14 PR #28에서 완료: 도곽 사실, IFC·SketchUp 마커, DXF↔IFC 형상 링크,
+SketchUp exporter / Revit→IFC 가이드. CHANGELOG 참조)
 
 ## P3 — 운영
 

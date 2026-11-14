@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from archontos.cad.dxf import CAD_NAMESPACE, ParsedDrawing
+from archontos.cad.geolink import DEFAULT_TOLERANCE_M, match_geometric
 from archontos.cad.model import SHARED_REF_KINDS
 
 
@@ -136,7 +137,126 @@ async def record_source_refs(
             ),
             links,
         )
-    return len(links)
+    return len(links) + await record_geometric_links(
+        session,
+        revision_id=revision_id,
+        source_format=drawing.source_format,
+        project_id=project_id,
+        revision_label=revision_label,
+        jurisdiction_code=jurisdiction_code,
+    )
+
+
+#: Auto-linked source-format pairs (P2): DXF drawings <-> IFC models.
+GEOMETRIC_PAIRS = {"dxf": "ifc", "ifc": "dxf"}
+
+
+async def record_geometric_links(
+    session: AsyncSession,
+    *,
+    revision_id: str,
+    source_format: str,
+    project_id: str,
+    revision_label: str,
+    jurisdiction_code: str,
+    tolerance_m: float = DEFAULT_TOLERANCE_M,
+) -> int:
+    """Geometric links between a new DXF/IFC revision and its IFC/DXF counterparts.
+
+    Counterparts share ``project_id``, jurisdiction and ``revision_label``. Objects that already
+    have a ``manual`` or ``shared_ref`` link (in either revision) are skipped, so those links
+    always win; existing geometric links are kept (deterministic ids, ON CONFLICT DO NOTHING).
+    """
+    other_format = GEOMETRIC_PAIRS.get(source_format)
+    if other_format is None:
+        return 0
+    others = (
+        await session.execute(
+            text(
+                """
+                SELECT r.id::text AS id FROM cad_revision r
+                  JOIN cad_artifact a ON a.id = r.cad_artifact_id
+                 WHERE a.project_id = :project AND a.jurisdiction_code = :jur
+                   AND r.revision_label = :label AND r.source_format = :fmt
+                   AND r.id <> CAST(:rev AS uuid)
+                 ORDER BY r.id
+                """
+            ),
+            {
+                "project": project_id,
+                "jur": jurisdiction_code,
+                "label": revision_label,
+                "fmt": other_format,
+                "rev": revision_id,
+            },
+        )
+    ).all()
+    if not others:
+        return 0
+    mine = await _objects_for_linking(session, revision_id)
+    rows = []
+    for other in others:
+        theirs = await _objects_for_linking(session, other.id)
+        locked: set[str] = set(
+            (
+                await session.execute(
+                    text(
+                        """
+                        SELECT unnest(ARRAY[object_a_id, object_b_id])::text
+                          FROM model_object_link
+                         WHERE method <> 'geometric'
+                           AND (revision_a_id IN (CAST(:r1 AS uuid), CAST(:r2 AS uuid))
+                                OR revision_b_id IN (CAST(:r1 AS uuid), CAST(:r2 AS uuid)))
+                        """
+                    ),
+                    {"r1": revision_id, "r2": other.id},
+                )
+            ).scalars()
+        )
+        for m in match_geometric(mine, theirs, tolerance_m=tolerance_m, exclude_ids=locked):
+            a, b = sorted(((m.a_id, revision_id), (m.b_id, other.id)))
+            rows.append(
+                {
+                    "id": link_id(a[0], b[0], "geometric"),
+                    "project": project_id,
+                    "jur": jurisdiction_code,
+                    "a": a[0],
+                    "b": b[0],
+                    "ra": a[1],
+                    "rb": b[1],
+                    "conf": m.confidence,
+                    "note": f"kind={m.kind} iou={m.iou} d={m.centroid_distance_m}m",
+                }
+            )
+    if rows:
+        await session.execute(
+            text(
+                """
+                INSERT INTO model_object_link(id, project_id, jurisdiction_code, object_a_id,
+                    object_b_id, revision_a_id, revision_b_id, method, confidence, note)
+                VALUES (CAST(:id AS uuid), :project, :jur, CAST(:a AS uuid), CAST(:b AS uuid),
+                    CAST(:ra AS uuid), CAST(:rb AS uuid), 'geometric', :conf, :note)
+                ON CONFLICT (id) DO NOTHING
+                """
+            ),
+            rows,
+        )
+    return len(rows)
+
+
+async def _objects_for_linking(session: AsyncSession, revision_id: str) -> list[dict[str, Any]]:
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT id::text AS id, kind, geometry_json AS geometry FROM arch_object
+                 WHERE revision_id = CAST(:rev AS uuid) ORDER BY id
+                """
+            ),
+            {"rev": revision_id},
+        )
+    ).all()
+    return [dict(r._mapping) for r in rows]
 
 
 _OBJECT_SIDE = """
@@ -163,7 +283,7 @@ def _link_row(row: Any) -> dict[str, Any]:
 
 _LINK_SELECT = """
     SELECT l.id::text AS id, l.project_id, l.jurisdiction_code, l.method, l.ref_kind,
-           l.ref_value, l.note, l.created_by, l.created_at,
+           l.ref_value, l.note, l.created_by, l.created_at, l.confidence::float8 AS confidence,
            l.object_a_id::text AS object_a_id, l.revision_a_id::text AS revision_a_id,
            oa.kind AS object_a_kind, ra.source_format AS object_a_source_format,
            oa.source_handles AS object_a_handles,
