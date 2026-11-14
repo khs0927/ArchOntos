@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
@@ -14,13 +15,15 @@ from archontos.actions.persistence import PostgresActionStore
 from archontos.actions.service import ProposedAction
 from archontos.authz import AuthorizationError, Permission, authorize
 from archontos.cad.bcf import export_bcf
+from archontos.cad.bcf_import import MAX_ZIP_BYTES as MAX_BCF_BYTES
+from archontos.cad.bcf_import import BcfImportError, parse_bcf
 from archontos.cad.check_persistence import CadCheckRepository, inputs_digest
 from archontos.cad.checks import CadCheckInputError, extract_fact_space, run_checks
 from archontos.cad.diff import DiffInputError, DiffTolerances
 from archontos.cad.diff_persistence import CadDiffRepository, RevisionNotFound
 from archontos.cad.dxf import CadDependencyError, CadParseError, parse_dxf
 from archontos.cad.ifc import parse_ifc
-from archontos.cad.issue_notes import CadIssueNoteRepository, IssueNotFound
+from archontos.cad.issue_notes import CadIssueNoteRepository, IssueNotFound, import_bcf_topics
 from archontos.cad.issue_persistence import CadIssueRepository, RunNotFound
 from archontos.cad.links import LinkInputError, ModelLinkRepository
 from archontos.cad.markers import MarkerError, apply_markers_to_dxf, to_power_cad_payload
@@ -725,6 +728,32 @@ async def list_cad_issue_notes(
         except InvalidCadCursor as exc:
             raise _cad_cursor_error(exc) from exc
     return {"items": items, "next_cursor": nxt}
+
+
+@app.post("/v1/cad/issues/import.bcf", dependencies=[require(Permission.CAD_NOTE)])
+async def import_cad_issues_bcf(
+    request: Request, run_id: UUID | None = None, revision_id: UUID | None = None
+):
+    """Import a BCF 3.0 zip (request body): topic statuses and comments become issue notes.
+
+    Topics are matched to existing issues by ArchOntos' deterministic topic GUID; unknown
+    topics are reported and never create issues. Re-importing is idempotent by comment GUID.
+    ``run_id`` / ``revision_id`` narrow the issues considered."""
+    data = await request.body()
+    if len(data) > MAX_BCF_BYTES:
+        raise HTTPException(status_code=413, detail="BCF upload exceeds 20 MiB")
+    try:
+        topics = await asyncio.to_thread(parse_bcf, data)
+    except BcfImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    async with get_session_factory()() as session, session.begin():
+        return await import_bcf_topics(
+            session,
+            topics,
+            source_sha256=hashlib.sha256(data).hexdigest(),
+            run_id=str(run_id) if run_id else None,
+            revision_id=str(revision_id) if revision_id else None,
+        )
 
 
 # --- MVP-5: compliance reports + marker actions (approval gate) ---------------------------------

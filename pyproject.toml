@@ -25,6 +25,7 @@ dependencies = [
   "opentelemetry-api>=1.29,<2",
   "opentelemetry-sdk>=1.29,<2",
   "jsonschema>=4.23,<5",  # MIT; validates the SketchUp JSON export contract (MVP-4)
+  "defusedxml>=0.7.1,<1",  # PSF; hardened XML parsing of uploaded BCF files
 ]
 
 [project.optional-dependencies]
@@ -107,5 +108,5 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 # Third-party packages without type information.
-module = ["minio.*", "fastembed.*", "asyncpg.*", "pgvector.*", "ifcopenshell.*", "jsonschema.*"]
+module = ["minio.*", "fastembed.*", "asyncpg.*", "pgvector.*", "ifcopenshell.*", "jsonschema.*", "defusedxml.*"]
 ignore_missing_imports = true

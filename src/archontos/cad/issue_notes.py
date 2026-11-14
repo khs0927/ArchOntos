@@ -10,17 +10,20 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from archontos.cad.bcf import topic_guid
+from archontos.cad.bcf_import import BcfTopic, status_note_body, status_note_guid
 from archontos.cad.issue_persistence import CadIssueRepository
 from archontos.cad.persistence import InvalidCadCursor, filter_fingerprint
 
 NOTE_BODY_MAX = 4000
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _SELECT = """
     SELECT n.id::text AS id, n.issue_id::text AS issue_id, n.body, n.kind, n.external_guid,
            n.external_author, n.external_at, n.created_by, n.created_at
@@ -158,3 +161,97 @@ class CadIssueNoteRepository:
             else None
         )
         return items, nxt
+
+
+_VISIBLE_ISSUE_IDS = """
+    SELECT i.id::text AS id FROM cad_issue i
+     WHERE (CAST(:run AS uuid) IS NULL OR i.run_id = CAST(:run AS uuid))
+       AND (CAST(:rev AS uuid) IS NULL OR i.revision_id = CAST(:rev AS uuid))
+     ORDER BY i.id
+"""
+
+
+async def import_bcf_topics(
+    session: AsyncSession,
+    topics: list[BcfTopic],
+    *,
+    source_sha256: str,
+    run_id: str | None = None,
+    revision_id: str | None = None,
+) -> dict[str, Any]:
+    """Store topic statuses and comments as notes of the matching issues (never new issues).
+
+    Topics are matched by :func:`topic_guid` against the caller-visible issues (jurisdiction RLS,
+    optionally narrowed to a run or revision). Imported notes are idempotent by comment guid /
+    status stamp, so re-importing the same (or an extended) file only adds what is new. An
+    imported status never changes the derived issue status.
+    """
+    rows = (
+        await session.execute(text(_VISIBLE_ISSUE_IDS), {"run": run_id, "rev": revision_id})
+    ).all()
+    by_topic = {topic_guid(r.id): r.id for r in rows}
+    repo = CadIssueNoteRepository(session)
+    unknown: list[str] = []
+    matched: list[dict[str, Any]] = []
+    created = skipped = 0
+    for topic in topics:
+        issue_id = by_topic.get(topic.guid)
+        if issue_id is None:
+            unknown.append(topic.guid)
+            continue
+        made = dup = 0
+        stamp = status_note_guid(topic)
+        if stamp is not None:
+            note = await repo.add_imported(
+                issue_id,
+                kind="bcf_status",
+                body=status_note_body(topic),
+                external_guid=stamp,
+                external_author=topic.modified_author,
+                external_at=topic.modified_at,
+            )
+            made, dup = (made + 1, dup) if note else (made, dup + 1)
+        for comment in sorted(topic.comments, key=lambda c: (c.date or _EPOCH, c.guid)):
+            note = await repo.add_imported(
+                issue_id,
+                kind="bcf_comment",
+                body=comment.text,
+                external_guid=comment.guid,
+                external_author=comment.author,
+                external_at=comment.date,
+            )
+            made, dup = (made + 1, dup) if note else (made, dup + 1)
+        created += made
+        skipped += dup
+        matched.append(
+            {
+                "topic_guid": topic.guid,
+                "issue_id": issue_id,
+                "status": topic.status,
+                "notes_created": made,
+                "notes_skipped": dup,
+            }
+        )
+    report = {
+        "topic_count": len(topics),
+        "matched_count": len(matched),
+        "unknown_topic_guids": unknown,
+        "notes_created": created,
+        "notes_skipped": skipped,
+        "matched": matched,
+    }
+    await session.execute(
+        text(
+            """
+            INSERT INTO audit_log(action, target_table, target_id, after_json)
+            VALUES ('cad.issues.import-bcf', 'cad_issue_note', :sha, CAST(:after AS jsonb))
+            """
+        ),
+        {
+            "sha": source_sha256,
+            "after": json.dumps(
+                {k: v for k, v in report.items() if k != "matched"}, sort_keys=True
+            ),
+        },
+    )
+    return report

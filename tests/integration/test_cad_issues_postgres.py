@@ -165,3 +165,52 @@ async def test_issue_notes_append_only_and_paged(client):  # noqa: F811
         with pytest.raises(DBAPIError):
             async with session.begin():
                 await session.execute(text("UPDATE cad_issue_note SET body = 'x'"))
+
+
+def _bcf_zip(topic: str, comments: list[tuple[str, str]]) -> bytes:
+    cs = "".join(
+        f'<Comment Guid="{g}"><Date>2026-11-03T01:00:00Z</Date><Author>lee</Author>'
+        f"<Comment>{t}</Comment></Comment>"
+        for g, t in comments
+    )
+    markup = (
+        f'<Markup><Topic Guid="{topic}" TopicStatus="Resolved"><Comments>{cs}</Comments>'
+        f"</Topic></Markup>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("bcf.version", '<Version VersionId="3.0"/>')
+        zf.writestr(f"{topic}/markup.bcf", markup)
+    return buf.getvalue()
+
+
+async def test_bcf_import_notes_idempotent_unknown_reported(client):  # noqa: F811
+    from archontos.cad.bcf import topic_guid
+
+    http, factory, store = client
+    built = await _upload(http, revision_plan(corridor_width=900), "A-503")
+    await _active_rules(factory, store, [RULE])
+    run = await _check(http, built)
+    issue = (await http.post(f"/v1/cad/checks/{run}/issues")).json()["items"][0]["id"]
+    c1, c2 = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+    data = _bcf_zip(topic_guid(issue), [(c1, "확인 완료")])
+    first = await http.post("/v1/cad/issues/import.bcf", content=data)
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["matched_count"] == 1 and body["notes_created"] == 2  # status + comment
+    again = await http.post("/v1/cad/issues/import.bcf", content=data)
+    assert again.json()["notes_created"] == 0 and again.json()["notes_skipped"] == 2
+    more = await http.post(
+        "/v1/cad/issues/import.bcf",
+        content=_bcf_zip(topic_guid(issue), [(c1, "확인 완료"), (c2, "추가")]),
+    )
+    assert more.json()["notes_created"] == 1
+    notes = (await http.get(f"/v1/cad/issues/{issue}/notes")).json()["items"]
+    assert sorted(n["kind"] for n in notes) == ["bcf_comment", "bcf_comment", "bcf_status"]
+    assert {n["external_author"] for n in notes if n["kind"] == "bcf_comment"} == {"lee"}
+
+    unknown = "44444444-4444-4444-8444-444444444444"
+    res = await http.post("/v1/cad/issues/import.bcf", content=_bcf_zip(unknown, [(c1, "x")]))
+    assert res.json()["unknown_topic_guids"] == [unknown] and res.json()["notes_created"] == 0
+    assert await count_rows(factory, "cad_issue") == 1  # never creates issues
+    assert (await http.post("/v1/cad/issues/import.bcf", content=b"junk")).status_code == 422
