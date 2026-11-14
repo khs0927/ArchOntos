@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Issue notes, BCF import, atomic marker execute, rerun-free resolution (P2; migration 021):
+  - `POST/GET /v1/cad/issues/{id}/notes` (new permission `cad.note` for curator, reviewer and
+    admin; reading needs `cad.read`). Append-only; the author is the request actor; cursor
+    pagination ordered by creation time. Migration 021 adds `kind` (`note` | `bcf_comment` |
+    `bcf_status`), `external_guid`, `external_author` and `external_at` to `cad_issue_note`
+    with a unique `(issue_id, external_guid)` index.
+  - `POST /v1/cad/issues/import.bcf` (zip as request body, `cad.note`): BCF 3.0 topics are
+    matched to issues by the deterministic topic GUID; topic status and comments become notes,
+    idempotent by comment GUID. Unknown topics are reported and never create issues. Entry
+    count, entry sizes and total size are bounded, names are checked for traversal, XML is read
+    with `defusedxml` (new dependency).
+  - `POST /v1/cad/markers/{id}/execute` writes the output link, outbox/audit rows and the
+    action `succeeded` status in one transaction under a row lock on the action.
+  - Issue `resolved` no longer needs `rerun_checks`: a lineage diff resolves an issue when the
+    object was removed, the newer revision check run for the same rule_version PASSes, or none
+    of the object successors still offends; otherwise `stale`. A status row is appended whenever
+    the derived status or basis changes.
+
 - MVP-2 object-pair rules (docs/MVP2-CAD-CHECKS.md 1.1): an explicit, deterministic pairing
   step (`archontos.cad.pairing`) gives `door.host_wall.*` / `window.host_wall.*` (IFC
   `IfcRelFillsElement` -> `IfcRelVoidsElement`, else wall lines near the insert point; two

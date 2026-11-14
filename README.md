@@ -192,5 +192,6 @@ Objects carry source refs (DXF handle, IFC GlobalId, SketchUp persistent_id), an
 ## MVP-5: issues, BCF 3.0, reports, marker actions
 
 See [docs/MVP5-BCF-REPORTS-ACTIONS.md](docs/MVP5-BCF-REPORTS-ACTIONS.md). Still incomplete for
-MVP-5: power-cad payload keys unverified against the live `cad_create_many` schema; marker
-execute is not atomic with the action status; issue notes have no API; markers are DXF-only.
+MVP-5: power-cad payload keys unverified against the live `cad_create_many` schema;
+markers are DXF-only. Issue notes (`/v1/cad/issues/{id}/notes`) and BCF import
+(`/v1/cad/issues/import.bcf`) are available.
