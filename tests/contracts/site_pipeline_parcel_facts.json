@@ -1,0 +1,31 @@
+{
+  "_comment": "Recorded SHAPES of site-pipeline-mcp parcel facts (synthetic values, no real parcel). Source: site-pipeline-mcp src/site_pipeline_mcp/knowledge.py save_facts/load_facts/brief + kg/rules.json fact keys, repo HEAD 353292d9752b416d060c0ab29274bf0f435be1d3.",
+  "flat": {
+    "pnu": "1111010100100010000",
+    "sigungu": "서울특별시 종로구",
+    "zone": "제2종일반주거지역",
+    "districts": ["최고고도지구"],
+    "areas": ["지구단위계획구역"],
+    "parcel_area_m2": 498.6,
+    "land_ledger_area_m2": 500.0,
+    "road_widths_m": [8.0],
+    "road_frontage_m": 14.2,
+    "road_side": "중로한면",
+    "district_plan": {"bcr_pct": 50, "far_pct": 200, "height_max_m": 12.0}
+  },
+  "cache_file": {
+    "pnu": "1111010100100010000",
+    "facts": {
+      "pnu": {"value": "1111010100100010000", "source": "key", "at": "2026-11-01T09:00:00+00:00"},
+      "zone": {"value": "제2종일반주거지역", "source": "korean-land analyze_parcel 2026-11-01", "at": "2026-11-01T09:00:00+00:00"},
+      "districts": {"value": ["최고고도지구"], "source": "landinfo.ned_getLandUseAttr", "at": "2026-11-01T09:00:00+00:00"},
+      "areas": {"value": [], "source": "landinfo.ned_getLandUseAttr", "at": "2026-11-01T09:00:00+00:00"},
+      "parcel_area_m2": {"value": 498.6, "source": "parcel_geometry", "at": "2026-11-01T09:00:00+00:00"}
+    }
+  },
+  "brief_facts_used": {
+    "pnu": {"value": "1111010100100010000", "source": "key", "at": "2026-11-01T09:00:00+00:00"},
+    "zone": {"value": "일반상업지역", "source": "call"},
+    "land_ledger_area_m2": {"value": 612.0, "source": "수동: 정부24 토지대장", "at": "2026-11-01T09:00:00+00:00"}
+  }
+}

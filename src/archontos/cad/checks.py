@@ -344,6 +344,79 @@ def land_parcel_facts(land_parcel: dict[str, Any] | None) -> tuple[dict[str, Any
     return ({"land_parcel": out} if out else {}), units
 
 
+_PNU = re.compile(r"^\d{19}$")
+
+
+def _site_pipeline_values(data: dict[str, Any]) -> dict[str, Any]:
+    """Flat ``{fact: value}`` from any of the three site-pipeline shapes."""
+    wrapped = data.get("facts_used")  # parcel_brief output: {key: {value, source, at}}
+    if wrapped is None and isinstance(data.get("facts"), dict):
+        wrapped = data["facts"]  # facts cache file / parcel_facts store: same wrapper
+    if wrapped is None:
+        return dict(data)  # already flat (the dict passed to parcel_facts)
+    if not isinstance(wrapped, dict):
+        raise CadCheckInputError("site-pipeline facts must be an object")
+    return {
+        k: (v["value"] if isinstance(v, dict) and "value" in v else v) for k, v in wrapped.items()
+    }
+
+
+def land_parcel_from_site_pipeline(data: dict[str, Any]) -> dict[str, Any]:
+    """Map site-pipeline parcel facts to the ``land_parcel`` input of :func:`run_checks`.
+
+    Accepts the flat facts dict, the facts cache file / ``parcel_brief`` ``facts_used`` shape
+    (``{key: {"value", "source", "at"}}``) and the cache file envelope ``{"pnu", "facts": {...}}``.
+    Mapping (site-pipeline fact -> ``land_parcel`` key):
+
+    * ``pnu`` -> ``pnu`` (19 digits; anything else is rejected);
+    * ``zone`` -> ``zone``; absent when site-pipeline left it unset for a parcel in two zones
+      (건축법 제54조 judgement pending), so zone-dependent rules give REVIEW;
+    * ``districts`` (용도지구) and ``areas`` (구역, e.g. 지구단위계획구역) -> ``districts``,
+      merged, de-duplicated and sorted;
+    * ``land_ledger_area_m2`` (토지대장) is preferred over ``parcel_area_m2`` (지적도 geometry)
+      -> ``site_area_m2``; a non-positive, non-numeric or boolean area is rejected.
+
+    Everything else (``road_widths_m``, ``district_plan``, ...) is not a ``land_parcel`` fact and
+    is ignored, never guessed. No network access.
+    """
+    if not isinstance(data, dict):
+        raise CadCheckInputError("site-pipeline parcel facts must be an object")
+    facts = _site_pipeline_values(data)
+    out: dict[str, Any] = {}
+    pnu = facts.get("pnu")
+    if pnu is not None:
+        if not isinstance(pnu, str) or not _PNU.match(pnu.strip()):
+            raise CadCheckInputError("site-pipeline pnu must be a 19-digit string")
+        out["pnu"] = pnu.strip()
+    zone = facts.get("zone")
+    if isinstance(zone, str) and zone.strip():
+        out["zone"] = zone.strip()
+    names: set[str] = set()
+    for key in ("districts", "areas"):
+        value = facts.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(isinstance(x, str) and x.strip() for x in value):
+            raise CadCheckInputError(f"site-pipeline {key} must be a list of strings")
+        names.update(x.strip() for x in value)
+    if names:
+        out["districts"] = sorted(names)
+    for key in ("land_ledger_area_m2", "parcel_area_m2"):
+        area = facts.get(key)
+        if area is None:
+            continue
+        if (
+            isinstance(area, bool)
+            or not isinstance(area, int | float)
+            or not math.isfinite(area)
+            or area <= 0
+        ):
+            raise CadCheckInputError(f"site-pipeline {key} must be a positive number")
+        out["site_area_m2"] = float(area)
+        break
+    return out
+
+
 def _flatten(prefix: str, value: Any) -> list[str]:
     if isinstance(value, dict):
         return [p for k, v in value.items() for p in _flatten(f"{prefix}.{k}", v)]

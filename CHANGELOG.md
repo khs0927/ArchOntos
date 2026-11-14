@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- P1 integration checks:
+  - `to_power_cad_payload` now matches power-cad `cad_create_many` (checked against
+    `CadTools.cs`/`CommandDispatcher.Bulk.cs`/`CreateSpec.cs` at commit 845f63a4): arguments
+    `entities` (was `items`), per-entity `hs` XData tags with top-level `xdata_app`
+    (was `xdata`), MTEXT `position` + `justify` (was `insert`). Contract test against a vendored
+    schema snapshot in `tests/contracts/`.
+  - `MinioArtifactStore.get_bytes`/`get_json` raise `ArtifactReadError` for missing objects and
+    failed reads instead of leaking client exceptions; unit tests with a client double.
+  - New `archontos-stale-edges/1` export for Ontology: `python -m archontos.cad.export_stale` and
+    `GET /v1/cad/revisions/{id}/checks/stale-edges` (deterministic JSON, `sha256`).
+  - `land_parcel_from_site_pipeline()` maps site-pipeline parcel facts (flat, cache file or
+    `parcel_brief` `facts_used` shape) to the `land_parcel` check input.
+
 - Issue notes, BCF import, atomic marker execute, rerun-free resolution (P2; migration 021):
   - `POST/GET /v1/cad/issues/{id}/notes` (new permission `cad.note` for curator, reviewer and
     admin; reading needs `cad.read`). Append-only; the author is the request actor; cursor
