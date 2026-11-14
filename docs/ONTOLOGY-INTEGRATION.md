@@ -14,7 +14,21 @@ ArchOntos 규칙과 Ontology(도면 파싱 → 지식그래프) 사이의 계약
 
 ```powershell
 # 1) Ontology: 프로젝트 사실 내보내기 (PC)
-aec operational kg-facts 주례동-315-4 --out stale-edges.json
+aec operational kg-facts 주례동-315-4 --out D:\AECData\rules\facts-주례동.json
+# 2) ArchOntos: 규칙 평가 (운영자가 관할·용도 같은 도면에 없는 사실을 보충)
+python -m archontos.integration.ontology --rule rule.json --facts D:\AECData\rules\facts-주례동.json `
+  --context '{"context": {"jurisdiction": "KR-26"}}' --rule-id R-STAIR-2 --version-label 2024-01 `
+  --title "직통계단 2개소" --export-links D:\AECData\rules\links.json
+# 3) Ontology: 링크를 KG에 반영
+aec operational kg-build --rules D:\AECData\rules\links.json
+```
+
+### stale 엣지 내보내기 (네트워크 없음)
+
+```powershell
+# 도면 리비전 API 응답을 파일로 저장한 뒤 변환 (또는 GET .../checks/stale-edges 를 그대로 저장)
+python -m archontos.cad.export_stale --results results.json --objects objects.json `
+  --revision-id <리비전 id> --out D:\AECDataules\stale-edges.json
 ```
 
 - 대상: 리비전이 변경 있는 계보(lineage) diff의 base가 되어 최신이 아니게 된 검토 결과만 내보냅니다.
