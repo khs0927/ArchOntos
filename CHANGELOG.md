@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- P0 real-data verification:
+  - Local PostgreSQL integration run (pgvector/pgvector:pg18, throwaway container): full suite
+    444 passed, 1 skipped (2026-11-14, DESKTOP-KTQHS1I).
+  - New `ops/e2e_real_law.py` + `docs/E2E-REAL-LAW.md`: law.go.kr DRF (건축법 시행령,
+    피난ㆍ방화구조 규칙 제15조·제15조의2) -> evidence -> assertions (author != approver) ->
+    compiled rules -> generated DXF (`tests.cad_fixtures.real_law_plan`) -> checks
+    (expected FAIL/PASS/REVIEW with real evidence locators) -> issues -> BCF -> report ->
+    four-eyes marker action. Key only via `doppler run` (`LAW_OC`), redacted in all output;
+    skips without a key. First real run blocked: DRF answered 302 to `/sorry/sorry.html`.
+
 - P1 integration checks:
   - `to_power_cad_payload` now matches power-cad `cad_create_many` (checked against
     `CadTools.cs`/`CommandDispatcher.Bulk.cs`/`CreateSpec.cs` at commit 845f63a4): arguments

@@ -7,16 +7,21 @@
 
 ## P0 — 실데이터 검증 (다음 단계)
 
-- [ ] 실제 법령 규칙 몇 개(예: 복도 폭, 계단 폭, 실 면적)를 assertion → 승인 → 규칙으로
-      만들고, 실제 회사 도면으로 업로드 → 검토 → 이슈 → BCF → 보고서까지 E2E 실행
-- [ ] Revit/SketchUp에서 실제로 내보낸 IFC·SketchUp JSON으로 MVP-4 매핑 검증
-      (지금까지는 코드로 만든 작은 모델로만 테스트)
-- [ ] 실제 IdP(Keycloak 등)와 OIDC 연동 검증 (지금은 로컬 RSA 키 테스트만)
-- [ ] 로컬 PostgreSQL 통합 테스트 실행 (그동안 PC 자원 문제로 CI에서만 확인)
+- [ ] 실제 법령 E2E 실행 기록 남기기: `ops/e2e_real_law.py`(docs/E2E-REAL-LAW.md)는 준비됨.
+      2026-11-14 실행에서 law.go.kr DRF가 302 → `/sorry/sorry.html`로 거부해 1단계에서 중단.
+      OC 등록 IP/도메인 확인 후 재실행하고 결과를 문서에 기록
 
 ## 사용자 조치 필요
 
 코드로는 끝낼 수 없고 사람이 실제 프로그램·데이터로 확인해야 하는 항목.
+
+- [ ] law.go.kr Open API(open.law.go.kr) OC 계정의 등록 IP/도메인 확인 — 지금 이 PC에서
+      DRF 호출이 `/sorry/sorry.html`로 리다이렉트됨
+- [ ] 실제 회사 도면(DXF)으로 업로드 → 검토 → 이슈 → BCF → 보고서 확인
+      (E2E 스크립트는 생성 도면 사용)
+- [ ] Revit/SketchUp에서 실제로 내보낸 IFC·SketchUp JSON으로 MVP-4 매핑 검증
+      (지금까지는 코드로 만든 작은 모델로만 테스트)
+- [ ] 실제 IdP(Keycloak 등)와 OIDC 연동 검증 (지금은 로컬 RSA 키 테스트만)
 
 - [ ] BCF 3.0 zip을 BIMcollab·Solibri 등 실제 뷰어에서 열어 확인
 - [ ] power-cad 실제 AutoCAD에서 마커 payload 실행 확인: `to_power_cad_payload` 결과에

@@ -64,6 +64,23 @@ def aia_plan() -> bytes:
 
 
 @cache
+def real_law_plan() -> bytes:
+    """Plan for the real-law E2E (mm): a 1.5 m and a 1.0 m corridor plus a 1.2 m wide stair."""
+    doc = ezdxf.new("R2018")
+    doc.header["$INSUNITS"] = 4
+    for name in ("벽", "실", "실명", "계단"):
+        doc.layers.add(name)
+    msp = doc.modelspace()
+    for y0, width, label in ((0, 1500, "복도-1"), (5000, 1000, "복도-2")):
+        ring = [(0, y0), (12000, y0), (12000, y0 + width), (0, y0 + width)]
+        msp.add_lwpolyline(ring, close=True, dxfattribs={"layer": "실"})
+        msp.add_text(label, dxfattribs={"layer": "실명", "insert": (6000, y0 + width / 2)})
+    stair = [(14000, 0), (15200, 0), (15200, 3000), (14000, 3000)]
+    msp.add_lwpolyline(stair, close=True, dxfattribs={"layer": "계단"})
+    return _bytes(doc)
+
+
+@cache
 def revision_plan(
     *,
     door_x: int = 500,
