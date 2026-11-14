@@ -51,6 +51,38 @@ _SUPERSEDING_SQL = """
      ORDER BY d.id
 """
 
+_CHANGES_SQL = """
+    SELECT c.base_object_id::text AS base_id, c.change_type,
+           array_remove(array_agg(c.target_object_id::text ORDER BY c.target_object_id),
+                        NULL) AS target_ids
+      FROM cad_object_change c
+     WHERE c.diff_id = CAST(:diff AS uuid) AND c.base_object_id IS NOT NULL
+     GROUP BY c.base_object_id, c.change_type
+"""
+
+# One verdict per rule_version on the diff target revision: prefer the run with the same
+# reference date as the issue run, then the newest run (deterministic tie-break by id).
+_TARGET_RESULTS_SQL = """
+    SELECT DISTINCT ON (res.rule_version_id)
+           res.rule_version_id::text AS rule_version_id, run.id::text AS run_id, res.outcome,
+           ARRAY(SELECT x::text FROM unnest(res.arch_object_ids) x ORDER BY 1)
+             AS arch_object_ids
+      FROM cad_check_run run
+      JOIN cad_check_result res ON res.run_id = run.id
+     WHERE run.revision_id = CAST(:rev AS uuid) AND run.jurisdiction_code = :jur
+     ORDER BY res.rule_version_id, (run.reference_date = CAST(:ref AS date)) DESC,
+              run.created_at DESC, run.id DESC
+"""
+
+_LATEST_STATUS_SQL = """
+    SELECT DISTINCT ON (st.issue_id) st.issue_id::text AS issue_id, st.status,
+           st.basis_diff_id::text AS basis,
+           (SELECT count(*) FROM cad_issue_status c WHERE c.issue_id = st.issue_id) AS n
+      FROM cad_issue_status st JOIN cad_issue i ON i.id = st.issue_id
+     WHERE i.run_id = CAST(:run AS uuid)
+     ORDER BY st.issue_id, st.derived_at DESC, st.id DESC
+"""
+
 _TARGET_SQL = """
     SELECT d.id::text AS id, d.base_revision_id::text AS base_revision_id,
            d.transitions_json AS transitions
@@ -94,6 +126,35 @@ class CadIssueRepository:
         rows = (await self.session.execute(text(sql), {"rev": rev})).all()
         return [dict(r._mapping) for r in rows]
 
+    async def _lineage_diffs(self, run: dict[str, Any], rev: str) -> list[dict[str, Any]]:
+        """Superseding diffs with the per-object lineage and the target-revision verdicts."""
+        diffs = await self._diffs(_SUPERSEDING_SQL, rev)
+        for diff in diffs:
+            changes = (await self.session.execute(text(_CHANGES_SQL), {"diff": diff["id"]})).all()
+            diff["changes"] = {
+                r.base_id: {"change_type": r.change_type, "target_object_ids": list(r.target_ids)}
+                for r in changes
+            }
+            verdicts = (
+                await self.session.execute(
+                    text(_TARGET_RESULTS_SQL),
+                    {
+                        "rev": diff["target_revision_id"],
+                        "jur": run["jurisdiction_code"],
+                        "ref": _date(run["reference_date"]),
+                    },
+                )
+            ).all()
+            diff["target_results"] = {
+                r.rule_version_id: {
+                    "run_id": r.run_id,
+                    "outcome": r.outcome,
+                    "arch_object_ids": list(r.arch_object_ids),
+                }
+                for r in verdicts
+            }
+        return diffs
+
     async def _source_refs(self, rev: str) -> dict[str, list[tuple[str, str]]]:
         rows = (
             await self.session.execute(
@@ -126,11 +187,17 @@ class CadIssueRepository:
             results,
             objects,
             await self._source_refs(rev),
-            superseding_diffs=await self._diffs(_SUPERSEDING_SQL, rev),
+            superseding_diffs=await self._lineage_diffs(run, rev),
             target_diffs=await self._diffs(_TARGET_SQL, rev),
         )
         new_issues = 0
         new_status = 0
+        latest = {
+            r.issue_id: (r.status, r.basis, int(r.n))
+            for r in (
+                await self.session.execute(text(_LATEST_STATUS_SQL), {"run": run["id"]})
+            ).all()
+        }
         for issue in issues:
             inserted = (
                 await self.session.execute(
@@ -179,27 +246,33 @@ class CadIssueRepository:
                 )
             ).first()
             new_issues += inserted is not None
-            status_row = (
-                await self.session.execute(
-                    text(
-                        """
-                        INSERT INTO cad_issue_status(id, issue_id, status, basis_diff_id)
-                        VALUES (CAST(:id AS uuid), CAST(:issue AS uuid), :status,
-                                CAST(:basis AS uuid))
-                        ON CONFLICT (id) DO NOTHING
-                        RETURNING id
-                        """
-                    ),
-                    {
-                        "id": status_id_for(
-                            issue["id"], issue["status"], issue["status_basis_diff_id"]
+            prior = latest.get(issue["id"])
+            status_row = None
+            if prior is None or prior[:2] != (issue["status"], issue["status_basis_diff_id"]):
+                status_row = (
+                    await self.session.execute(
+                        text(
+                            """
+                            INSERT INTO cad_issue_status(id, issue_id, status, basis_diff_id)
+                            VALUES (CAST(:id AS uuid), CAST(:issue AS uuid), :status,
+                                    CAST(:basis AS uuid))
+                            ON CONFLICT (id) DO NOTHING
+                            RETURNING id
+                            """
                         ),
-                        "issue": issue["id"],
-                        "status": issue["status"],
-                        "basis": issue["status_basis_diff_id"],
-                    },
-                )
-            ).first()
+                        {
+                            "id": status_id_for(
+                                issue["id"],
+                                issue["status"],
+                                issue["status_basis_diff_id"],
+                                prior[2] if prior else 0,
+                            ),
+                            "issue": issue["id"],
+                            "status": issue["status"],
+                            "basis": issue["status_basis_diff_id"],
+                        },
+                    )
+                ).first()
             new_status += status_row is not None
         if new_issues or new_status:
             await self._emit(run, issues, new_issues, new_status)

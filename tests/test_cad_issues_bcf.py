@@ -194,3 +194,58 @@ def test_bcf_zip_structure_and_xml():
     )
     assert markup.find("Topic/Viewpoints") is None
     assert markup.find("Topic").get("TopicType") == "Warning"
+
+
+def _lineage_diff(did: str, change: dict | None, result: dict | None, rv: str = RV_FAIL) -> dict:
+    return {
+        "id": did,
+        "transitions": [],
+        "changes": {OBJ_A: change} if change else {},
+        "target_results": {rv: result} if result else {},
+    }
+
+
+def test_resolved_without_rerun_by_lineage():
+    moved = {"change_type": "modified", "target_object_ids": ["t-1"]}
+    # the object was removed: resolved even though the target has no run for the rule
+    removed = _lineage_diff("d1", {"change_type": "removed", "target_object_ids": []}, None)
+    assert derive_status("run-1", RV_FAIL, [removed], OBJ_A) == ("resolved", "d1")
+    # the rule now PASSes on the target revision run
+    passes = _lineage_diff("d2", moved, {"outcome": "PASS", "arch_object_ids": []})
+    assert derive_status("run-1", RV_FAIL, [passes], OBJ_A) == ("resolved", "d2")
+    # still failing, but only on another object: this object passes now
+    elsewhere = _lineage_diff("d3", moved, {"outcome": "FAIL", "arch_object_ids": ["t-9"]})
+    assert derive_status("run-1", RV_FAIL, [elsewhere], OBJ_A) == ("resolved", "d3")
+    # still failing on the successor of this object -> stale
+    same = _lineage_diff("d4", moved, {"outcome": "FAIL", "arch_object_ids": ["t-1", "t-9"]})
+    assert derive_status("run-1", RV_FAIL, [same], OBJ_A) == ("stale", "d4")
+    # offenders unknown (drawing-level FAIL) -> cannot conclude -> stale
+    unknown = _lineage_diff("d5", moved, {"outcome": "FAIL", "arch_object_ids": []})
+    assert derive_status("run-1", RV_FAIL, [unknown], OBJ_A) == ("stale", "d5")
+    # no run for the rule on the target revision -> stale; wrong rule does not count
+    no_run = _lineage_diff("d6", moved, None)
+    assert derive_status("run-1", RV_FAIL, [no_run], OBJ_A) == ("stale", "d6")
+    other_rule = _lineage_diff("d7", moved, {"outcome": "PASS", "arch_object_ids": []}, RV_REVIEW)
+    assert derive_status("run-1", RV_FAIL, [other_rule], OBJ_A) == ("stale", "d7")
+    # a drawing-level issue (no object) resolves only when the rule PASSes
+    assert derive_status("run-1", RV_FAIL, [elsewhere]) == ("stale", "d3")
+    assert derive_status("run-1", RV_FAIL, [passes]) == ("resolved", "d2")
+    # the first resolving diff (by id) is the basis; order of input does not matter
+    assert derive_status("run-1", RV_FAIL, [passes, same, removed], OBJ_A) == ("resolved", "d1")
+
+
+def test_derive_issues_uses_object_lineage_per_issue():
+    diff = {
+        "id": "dx",
+        "transitions": [],
+        "changes": {
+            OBJ_A: {"change_type": "modified", "target_object_ids": ["t-a"]},
+            OBJ_B: {"change_type": "modified", "target_object_ids": ["t-b"]},
+        },
+        "target_results": {RV_FAIL: {"outcome": "FAIL", "arch_object_ids": ["t-b"]}},
+    }
+    issues = derive_issues(RUN, RESULTS, OBJECTS, REFS, superseding_diffs=[diff])
+    status = {(i["rule_version_id"], i["arch_object_id"]): i["status"] for i in issues}
+    assert status[(RV_FAIL, OBJ_A)] == "resolved"
+    assert status[(RV_FAIL, OBJ_B)] == "stale"
+    assert status[(RV_REVIEW, None)] == "stale"

@@ -214,3 +214,35 @@ async def test_bcf_import_notes_idempotent_unknown_reported(client):  # noqa: F8
     assert res.json()["unknown_topic_guids"] == [unknown] and res.json()["notes_created"] == 0
     assert await count_rows(factory, "cad_issue") == 1  # never creates issues
     assert (await http.post("/v1/cad/issues/import.bcf", content=b"junk")).status_code == 422
+
+
+async def test_issue_resolved_without_rerun_checks(client):  # noqa: F811
+    http, factory, store = client
+    built = await _upload(http, revision_plan(corridor_width=900), "A-504")
+    fixed = await _upload(http, revision_plan(corridor_width=1300), "A-504")
+    await _active_rules(factory, store, [RULE])
+    built_run = await _check(http, built)
+    diff = await http.post(
+        "/v1/cad/diffs", json={"base_revision_id": built, "target_revision_id": fixed}
+    )
+    assert diff.status_code == 201, diff.text
+
+    # the newer revision has no check run yet -> superseded, nothing shows the issue gone
+    first = await http.post(f"/v1/cad/checks/{built_run}/issues")
+    items = first.json()["items"]
+    assert items and {i["status"] for i in items} == {"stale"}
+
+    # a check run on the newer revision (same rule) now PASSes -> resolved, no rerun_checks
+    await _check(http, fixed)
+    second = await http.post(f"/v1/cad/checks/{built_run}/issues")
+    assert second.json()["new_issue_count"] == 0
+    assert second.json()["new_status_count"] == len(items)
+    assert {i["status"] for i in second.json()["items"]} == {"resolved"}
+    assert {i["status_basis_diff_id"] for i in second.json()["items"]} == {
+        diff.json()["diff"]["id"]
+    }
+    # idempotent: deriving again appends nothing
+    third = await http.post(f"/v1/cad/checks/{built_run}/issues")
+    assert third.json()["new_status_count"] == 0
+    listed = await http.get("/v1/cad/issues", params={"run_id": built_run, "status": "resolved"})
+    assert len(listed.json()["items"]) == len(items)
