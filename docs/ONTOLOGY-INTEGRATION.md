@@ -28,7 +28,7 @@ aec operational kg-build --rules D:\AECData\rules\links.json
 ```powershell
 # 도면 리비전 API 응답을 파일로 저장한 뒤 변환 (또는 GET .../checks/stale-edges 를 그대로 저장)
 python -m archontos.cad.export_stale --results results.json --objects objects.json `
-  --revision-id <리비전 id> --out D:\AECDataules\stale-edges.json
+  --revision-id <리비전 id> --out D:\AECData\rules\stale-edges.json
 ```
 
 - 대상: 리비전이 변경 있는 계보(lineage) diff의 base가 되어 최신이 아니게 된 검토 결과만 내보냅니다.
