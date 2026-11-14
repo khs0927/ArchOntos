@@ -390,7 +390,7 @@ async def run_cad_checks(revision_id: UUID, payload: CadCheckRequest, response: 
         try:
             run = run_checks(
                 rules,
-                extract_fact_space(objects),
+                extract_fact_space(objects, model_meta=revision.get("model_meta")),
                 jurisdiction=payload.jurisdiction_code,
                 reference_date=reference_date,
                 land_parcel=payload.land_parcel,
@@ -524,7 +524,7 @@ async def get_cad_diff(diff_id: UUID):
 async def list_cad_diff_changes(
     diff_id: UUID,
     change_type: Annotated[
-        str | None, Query(pattern=r"^(added|removed|modified|unchanged)$")
+        str | None, Query(pattern=r"^(added|removed|modified|unchanged|split|merged)$")
     ] = None,
     kind: Annotated[
         str | None, Query(pattern=r"^(wall|door|window|space|stair|column|opening)$")

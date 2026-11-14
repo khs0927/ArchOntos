@@ -13,13 +13,14 @@ import hashlib
 import io
 import json
 import math
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 from archontos.cad.rules import DEFAULT_RULE_SET, MappingRule, MappingRuleSet
 
-PARSER_VERSION = "dxf-1.0"
+PARSER_VERSION = "dxf-1.1"  # 1.1: INSERT attributes, width_source on widths
 #: Namespace for every CAD uuid5. Never change: ids are part of the persisted identity.
 CAD_NAMESPACE = uuid.UUID("6f1d3c2a-7b4e-5a90-9c1d-2e3f4a5b6c7d")
 
@@ -43,6 +44,41 @@ _ENTITY_TYPES = (
     "TEXT",
     "MTEXT",
 )
+
+
+#: INSERT attribute tags that carry an effective (clear / leaf / opening) width, best first.
+WIDTH_ATTRIBUTE_TAGS = (
+    "CLEAR_WIDTH",
+    "유효폭",
+    "OPENING_WIDTH",
+    "LEAF_WIDTH",
+    "DOOR_WIDTH",
+    "WIDTH",
+    "문폭",
+    "폭",
+    "W",
+)
+_WIDTH_TEXT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)?\s*$", re.IGNORECASE)
+_TEXT_UNITS = {"mm": 0.001, "cm": 0.01, "m": 1.0}
+
+
+def attribute_width(attributes: Any, factor: float) -> tuple[float, str] | None:
+    """(width in m, tag) from block attributes; a bare number is in drawing units."""
+    if not isinstance(attributes, dict):
+        return None
+    for tag in WIDTH_ATTRIBUTE_TAGS:
+        text = attributes.get(tag)
+        if not isinstance(text, str):
+            continue
+        match = _WIDTH_TEXT.match(text)
+        if match is None:
+            continue
+        value = float(match.group(1))
+        unit = (match.group(2) or "").lower()
+        metres = value * (_TEXT_UNITS[unit] if unit else factor)
+        if metres > 0 and math.isfinite(metres):
+            return metres, tag
+    return None
 
 
 class CadParseError(ValueError):
@@ -218,6 +254,13 @@ def _geometry(entity: Any, doc: Any) -> tuple[dict[str, Any], Any]:
             "rotation": _num(dxf.rotation),
             "scale": [_num(dxf.xscale), _num(dxf.yscale)],
         }
+        attribs = {
+            str(a.dxf.tag).strip().upper(): str(a.dxf.text)
+            for a in getattr(entity, "attribs", ()) or ()
+            if str(a.dxf.tag).strip()
+        }
+        if attribs:
+            geom["attributes"] = dict(sorted(attribs.items()))
         block = doc.blocks.get(dxf.name)
         if block is not None:
             from ezdxf import bbox as ezbbox
@@ -291,6 +334,11 @@ def _object_properties(
         if size:
             props["width"] = _quantity(size[0] * sx * factor, "m")
             props["depth"] = _quantity(size[1] * sy * factor, "m")
+            props["width_source"] = "block_bbox"
+        attr = attribute_width(geom.get("attributes"), factor)
+        if attr is not None:
+            props["width"] = _quantity(attr[0], "m")
+            props["width_source"] = f"attribute:{attr[1]}"
         out_geom = {
             "type": "point",
             "coordinates": [_num(geom["insert"][0] * factor), _num(geom["insert"][1] * factor)],
@@ -306,6 +354,7 @@ def _object_properties(
             if entity.bbox and rule.kind != "space":
                 props["width"] = _quantity((entity.bbox[2] - entity.bbox[0]) * factor, "m")
                 props["depth"] = _quantity((entity.bbox[3] - entity.bbox[1]) * factor, "m")
+                props["width_source"] = "bbox"
             if geom.get("has_bulges"):
                 props["approximated"] = "bulges ignored (straight segments)"
             return props, {"type": "polygon", "coordinates": scaled}

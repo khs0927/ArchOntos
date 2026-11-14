@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- MVP-2 object-pair rules (docs/MVP2-CAD-CHECKS.md 1.1): an explicit, deterministic pairing
+  step (`archontos.cad.pairing`) gives `door.host_wall.*` / `window.host_wall.*` (IFC
+  `IfcRelFillsElement` -> `IfcRelVoidsElement`, else wall lines near the insert point; two
+  parallel face lines count as one wall), `stair.storey.*` (IFC
+  `IfcRelContainedInSpatialStructure` storey and the model storeys) and `space.door_count` /
+  `corridor.door_count`. Unpaired or ambiguous pairs give REVIEW with the pairing reason.
+  Rules reading two kinds directly still give REVIEW and now name the pair paths.
+- MVP-2 effective widths (docs/MVP2-CAD-CHECKS.md 1.2): space/corridor/stair `width` is the
+  minimum clear width between opposite parallel polygon faces; DXF door/window `width` comes
+  from block attributes (`WIDTH`, `CLEAR_WIDTH`, `유효폭`, ...) when present; DXF wall
+  `thickness` from parallel face lines. The bbox fallback is flagged `approximate: true` in
+  `fact_meta` (per-object details and `drawing.*_min_width`). Parsers `dxf-1.1` (INSERT
+  attributes, `width_source`) and `ifc-1.1` (`host_ref`); checker `cad-checks-1.1`.
+- MVP-3 wall split / merge (docs/MVP3-REVISION-DIFF.md): straight collinear walls that replace
+  one wall (1 -> N) or are replaced by one (N -> 1) are reported as `split` / `merged` changes
+  with `lineage` (group ids, covered length, piece spans) instead of removed + added. New
+  tolerances `split_offset`, `split_max_gap`, `detect_split`; differ `cad-diff-1.1`.
+  Migration 020 widens the `change_type` / `match_method` checks, adds
+  `cad_object_change.lineage_json` and `cad_revision_diff.split_count` / `merged_count`.
+  `GET /v1/cad/diffs/{id}/changes?change_type=split|merged`.
+
 - MVP-3 revision diff (docs/MVP3-REVISION-DIFF.md):
   - `archontos.cad.diff` matches `arch_object` rows of two revisions by DXF handle, then by
     centroid distance and bbox IoU, and classifies added/removed/modified/unchanged with

@@ -28,10 +28,51 @@ Input: the `arch_object` rows of a revision. Output: the rule DSL fact space.
 - **Unit normalization** happens only here. Lengths in `mm`, `cm` or `m` become `m`. Areas in
   `mm2`, `cm2` or `m2` become `m2`. Other known units pass through unchanged. Unknown units,
   booleans and non-finite values are dropped, so the fact is missing.
-- A space's `width` and `length` are the short and long sides of its bounding box. This only
-  approximates rectangular rooms and corridors.
+- Widths are **effective widths** where the geometry allows it (section 1.2). The bbox
+  approximation is kept only as a fallback and is flagged `approximate: true`.
 - If a kind has no objects, its `min_*` and `*_total` facts are absent, not `0`, so a rule on
   them gives `REVIEW`. Counts are always present: `drawing.stair_count = 0` is a definite fact.
+
+### 1.1 Object pairs (`archontos.cad.pairing`)
+
+Rules that need two kinds at once do not read the second kind directly. They read **pair
+facts** that an explicit, deterministic pairing step builds before any rule runs. Each pair of
+an object has a status: `paired`, `unpaired` (no partner, or the inputs to look for one are
+missing) or `ambiguous` (several partners fit equally well). Only `paired` pairs produce facts.
+
+| Fact path | Unit | Pairing |
+|---|---|---|
+| `door.host_wall.<prop>`, `window.host_wall.<prop>` (`thickness`, `length`, `height`, ...) | m | IFC: `IfcRelFillsElement` -> opening -> `IfcRelVoidsElement` -> wall (stored as the door's `host_ref`, method `ifc:IfcRelFillsElement`). Otherwise geometric: wall lines within 0.35 m of the insert point; two parallel wall lines up to 0.6 m apart that overlap by 0.1 m are the faces of one wall and count as one host. A second host within 0.05 m of the best is a tie (`ambiguous`). |
+| `stair.storey.elevation` | m | IFC `IfcRelContainedInSpatialStructure` storey of the stair (`storey` property), matched by name to the revision's model storeys. DXF has no storeys: `unpaired`. |
+| `stair.storey.floor_number`, `stair.storey.basement_level`, `stair.storey.stair_count` | count | same; floors count 1, 2, ... above ground (`basement_level` 0), basements 1, 2, ... below (`floor_number` 0); `stair_count` is the number of stairs on that storey |
+| `space.door_count`, `corridor.door_count` | count | doors whose insert point is in the space polygon or within 0.35 m of its boundary (a door between two rooms counts for both). `ambiguous` when any door has no plan location; `unpaired` when the space has no polygon. |
+
+- **Fail closed.** A rule that reads a pair path of an object whose pair is `unpaired` or
+  `ambiguous` gives `REVIEW` with reason `Pairing <status> (<pair>): <why>` and the pairing in
+  `details.pairing`. It is never evaluated, so it can never `PASS` or `FAIL`.
+- Rules that do not read a pair path ignore pair status.
+- Per-object details list the pairs a rule read (`pairs.<name>.status/method/reason/
+  related_object_ids`), so a reviewer can see which wall or storey was used.
+- A rule that reads two kinds *directly* (`door.width` and `wall.length`) still gives `REVIEW`,
+  now with the pair paths to use instead (`details.pair_paths`).
+- `extract_fact_space(objects, model_meta=...)` takes the revision's `model_meta_json` for the
+  storeys. The check endpoint and diff re-runs pass it.
+
+### 1.2 Effective widths
+
+| Fact | Method (`fact_meta.method`) | `approximate` |
+|---|---|---|
+| `space.width`, `corridor.width`, `stair.width` | `opposite_faces`: minimum perpendicular distance between antiparallel polygon edges that overlap and face each other across the inside (rotated rectangles give the short side, an L-shaped corridor its narrower arm) | false |
+| `door.width`, `window.width` (DXF) | `attribute:<TAG>`: block attribute `CLEAR_WIDTH`, `유효폭`, `OPENING_WIDTH`, `LEAF_WIDTH`, `DOOR_WIDTH`, `WIDTH`, `문폭`, `폭` or `W` (first found; a bare number is in drawing units, `900`, `0.9m`, `90cm` accepted) | false |
+| `door.width`, `window.width` (IFC / SketchUp) | `ifc_quantity` / `skp_quantity` (IFC `OverallWidth`, then Qto) | false |
+| `wall.thickness` | `property` (IFC Qto), else `parallel_faces` (distance between the two face lines of a DXF wall) | false |
+| any of the above when the better method is not possible | `bbox` / `block_bbox` (block extent, polygon bounding box) | **true** |
+
+- The method is kept with the fact: per-object result details carry `fact_meta` for the facts a
+  rule read, and the fact space carries `fact_meta` for `drawing.*_min_width` (from the object
+  with the minimum). DXF objects record `width_source` as a property (parser `dxf-1.1`); DXF
+  revisions parsed before that have no `width_source` and are treated as `bbox`.
+- Polygons with no opposite parallel faces (triangles, coarse curves) fall back to the bbox.
 
 ## 2. Binding (`select_rules`)
 
@@ -138,9 +179,11 @@ Cursors are bound to their filters.
 
 ## Known limits
 
-- A per-object rule reads one object kind. Rules that pair objects (a door and its wall, a stair
-  and its storey) are not supported and give `REVIEW`.
-- Corridors are found by room name. Widths come from bounding boxes, not true clear widths
-  (door leaf versus clear opening, non-rectangular corridors).
+- A per-object rule reads one object kind plus its pair facts (section 1.1). Pairing
+  tolerances are fixed defaults (`PairTolerances`), not request parameters yet.
+- Geometric host pairing needs DXF wall lines near the door insert point; IFC walls have no plan
+  geometry here, so IFC doors pair only through `IfcRelFillsElement`.
+- Corridors are found by room name. Clear widths ignore furniture, columns inside the polygon and
+  door swing; curved outlines are only as good as their vertices.
 - There are no storey or building facts (`building.floor_count`, `building.use_group`) yet.
   Callers pass them in `facts`. Without them, rules scoped on those facts give `REVIEW`.

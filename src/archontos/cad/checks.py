@@ -12,6 +12,15 @@ Three steps, all deterministic and file/JSON based:
    (``door.width``) is evaluated once per object of that kind; a rule over ``drawing.*``,
    ``land_parcel.*`` or caller facts is evaluated once. Missing facts, unit mismatches and
    unexecutable rules give ``REVIEW`` (fail closed), never ``PASS``.
+
+Rules over two kinds read *pair facts* (``door.host_wall.thickness``, ``stair.storey.elevation``,
+``space.door_count``) built by the explicit pairing step in :mod:`archontos.cad.pairing`. An
+object whose pair is unpaired or ambiguous gives ``REVIEW`` with the pairing reason.
+
+Widths are effective widths where the geometry allows it (``fact_meta`` records the method):
+spaces/corridors/stairs use the minimum clear width between opposite parallel faces of their
+polygon, doors/windows a block attribute or IFC ``OverallWidth``, walls the distance between
+two parallel face lines. The bbox fallback is kept and flagged ``approximate: true``.
 """
 
 from __future__ import annotations
@@ -22,11 +31,13 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from archontos.cad import geometry as geo
+from archontos.cad.pairing import PAIR_NAMES, Pair, pair_objects
 from archontos.domain.enums import DecisionOutcome
 from archontos.rules.engine import RuleEvaluationError, evaluate_rule
 from archontos.rules.units import UNITS
 
-CHECKER_VERSION = "cad-checks-1.0"
+CHECKER_VERSION = "cad-checks-1.1"
 
 OBJECT_KINDS = ("wall", "door", "window", "space", "stair", "column", "opening")
 #: Spaces whose name matches this are also exposed as ``corridor`` objects.
@@ -72,12 +83,42 @@ class ObjectFacts:
     handles: tuple[str, ...]
     values: dict[str, float]
     units: dict[str, str]
+    #: Per-property derivation (``{"width": {"method": ..., "approximate": bool}}``).
+    meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Pairing outcomes by pair name (``host_wall``, ``storey``, ``door_count``).
+    pairs: dict[str, Pair] = field(default_factory=dict)
 
     def facts(self) -> dict[str, Any]:
-        return {self.kind: dict(self.values)}
+        values: dict[str, Any] = dict(self.values)
+        for name, pair in sorted(self.pairs.items()):
+            if pair.status != "paired":
+                continue
+            if pair.nested:
+                values[name] = dict(pair.values)
+            else:
+                values.update(pair.values)
+        return {self.kind: values}
 
     def fact_units(self) -> dict[str, str]:
-        return {f"{self.kind}.{k}": u for k, u in self.units.items()}
+        units = {f"{self.kind}.{k}": u for k, u in self.units.items()}
+        for name, pair in sorted(self.pairs.items()):
+            if pair.status != "paired":
+                continue
+            prefix = f"{self.kind}.{name}." if pair.nested else f"{self.kind}."
+            units.update({prefix + k: u for k, u in pair.units.items()})
+        return units
+
+    def blocking_pairs(self, paths: set[str]) -> list[Pair]:
+        """Pairs a rule reads (by its fact paths) that are not ``paired``."""
+        heads = {p.split(".")[1] for p in paths if p.startswith(self.kind + ".")}
+        return [
+            pair
+            for name, pair in sorted(self.pairs.items())
+            if pair.status != "paired"
+            and (
+                (pair.nested and name in heads) or (not pair.nested and heads & set(pair.provides))
+            )
+        ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +135,14 @@ class CadFactSpace:
     fact_units: dict[str, str]
     sources: dict[str, FactSource]
     objects: dict[str, list[ObjectFacts]]
+    #: Derivation of drawing-level facts (e.g. ``drawing.corridor_min_width`` approximate).
+    fact_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "facts": self.facts,
             "fact_units": self.fact_units,
+            "fact_meta": dict(sorted(self.fact_meta.items())),
             "sources": {
                 path: {"object_ids": list(s.object_ids), "entity_handles": list(s.handles)}
                 for path, s in sorted(self.sources.items())
@@ -119,20 +163,60 @@ def _polygon_extent(geometry: Any) -> tuple[float, float] | None:
     return round(min(dx, dy), 9), round(max(dx, dy), 9)
 
 
-def _object_facts(obj: dict[str, Any], kind: str) -> ObjectFacts:
+_MODEL_RULE_PREFIXES = ("ifc-", "skp-")
+_APPROXIMATE_SOURCES = frozenset({"block_bbox", "bbox"})
+
+
+def _width_meta(obj: dict[str, Any]) -> dict[str, Any]:
+    """How a stored ``width`` property was derived (DXF block bbox is approximate)."""
+    source = (obj.get("properties") or {}).get("width_source")
+    if isinstance(source, str) and source:
+        return {"method": source, "approximate": source in _APPROXIMATE_SOURCES}
+    rule_id = str(obj.get("rule_id") or "")
+    if rule_id.startswith(_MODEL_RULE_PREFIXES):
+        return {"method": f"{rule_id.split('-', 1)[0]}_quantity", "approximate": False}
+    # DXF revisions parsed before dxf-1.1 carry no width_source: their widths are bboxes.
+    return {"method": "bbox", "approximate": True}
+
+
+def _object_facts(
+    obj: dict[str, Any],
+    kind: str,
+    *,
+    pairs: dict[str, Pair] | None = None,
+    wall_thickness: float | None = None,
+) -> ObjectFacts:
     values: dict[str, float] = {}
     units: dict[str, str] = {}
+    meta: dict[str, dict[str, Any]] = {}
     for name, prop in sorted((obj.get("properties") or {}).items()):
         normalized = normalize_quantity(prop)
         if normalized is not None:
             values[name], units[name] = normalized
+    if "width" in values:
+        meta["width"] = _width_meta(obj)
+    ring = geo.polygon(obj.get("geometry"))
+    if obj["kind"] in ("space", "stair") and ring is not None:
+        clear = geo.clear_width(ring)
+        approximate_width = "width" not in values or meta["width"]["approximate"]
+        if clear is not None and approximate_width:
+            values["width"], units["width"] = clear, "m"
+            meta["width"] = {"method": "opposite_faces", "approximate": False}
     if obj["kind"] == "space":
         extent = _polygon_extent(obj.get("geometry"))
         if extent is not None:
-            values.setdefault("width", extent[0])
-            values.setdefault("length", extent[1])
-            units.setdefault("width", "m")
-            units.setdefault("length", "m")
+            if "width" not in values:
+                values["width"], units["width"] = extent[0], "m"
+                meta["width"] = {"method": "bbox", "approximate": True}
+            if "length" not in values:
+                values["length"], units["length"] = extent[1], "m"
+                meta["length"] = {"method": "bbox", "approximate": True}
+    if obj["kind"] == "wall":
+        if "thickness" in values:
+            meta["thickness"] = {"method": "property", "approximate": False}
+        elif wall_thickness is not None:
+            values["thickness"], units["thickness"] = wall_thickness, "m"
+            meta["thickness"] = {"method": "parallel_faces", "approximate": False}
     name = (obj.get("properties") or {}).get("name")
     return ObjectFacts(
         object_id=str(obj["id"]),
@@ -141,6 +225,8 @@ def _object_facts(obj: dict[str, Any], kind: str) -> ObjectFacts:
         handles=tuple(obj.get("source_handles") or ()),
         values=values,
         units=units,
+        meta=meta,
+        pairs=dict(pairs or {}),
     )
 
 
@@ -151,16 +237,28 @@ def _source(items: list[ObjectFacts]) -> FactSource:
     )
 
 
-def extract_fact_space(objects: list[dict[str, Any]]) -> CadFactSpace:
-    """Fact space of one revision from its ``arch_object`` rows (API/DB shape)."""
+def extract_fact_space(
+    objects: list[dict[str, Any]], *, model_meta: dict[str, Any] | None = None
+) -> CadFactSpace:
+    """Fact space of one revision from its ``arch_object`` rows (API/DB shape).
+
+    ``model_meta`` (``cad_revision.model_meta_json``) gives the storeys for stair pairs.
+    """
+    pairs, wall_groups = pair_objects(objects, model_meta=model_meta)
     per_kind: dict[str, list[ObjectFacts]] = {kind: [] for kind in FACT_KINDS}
     for obj in sorted(objects, key=lambda o: str(o["id"])):
         if obj.get("kind") not in OBJECT_KINDS:
             continue
-        facts = _object_facts(obj, obj["kind"])
+        oid = str(obj["id"])
+        group = wall_groups.get(oid)
+        obj_pairs = pairs.get(oid)
+        thickness = group.thickness if group is not None else None
+        facts = _object_facts(obj, obj["kind"], pairs=obj_pairs, wall_thickness=thickness)
         per_kind[obj["kind"]].append(facts)
         if obj["kind"] == "space" and facts.name and CORRIDOR_NAME.search(facts.name):
-            per_kind["corridor"].append(_object_facts(obj, "corridor"))
+            per_kind["corridor"].append(
+                _object_facts(obj, "corridor", pairs=obj_pairs, wall_thickness=thickness)
+            )
 
     drawing: dict[str, Any] = {}
     units: dict[str, str] = {}
@@ -179,6 +277,8 @@ def extract_fact_space(objects: list[dict[str, Any]]) -> CadFactSpace:
             units[path] = unit
             sources[path] = _source(items)
 
+    fact_meta: dict[str, dict[str, Any]] = {}
+
     def minimum(kind: str, prop: str, unit: str) -> None:
         items = [o for o in per_kind[kind] if prop in o.values and o.units[prop] == unit]
         if items:
@@ -187,6 +287,8 @@ def extract_fact_space(objects: list[dict[str, Any]]) -> CadFactSpace:
             drawing[f"{kind}_min_{prop}"] = low.values[prop]
             units[path] = unit
             sources[path] = _source([low])
+            if prop in low.meta:
+                fact_meta[path] = dict(low.meta[prop])
 
     total("space", "area", "m2")
     total("wall", "length", "m")
@@ -198,6 +300,7 @@ def extract_fact_space(objects: list[dict[str, Any]]) -> CadFactSpace:
         fact_units=units,
         sources=sources,
         objects=per_kind,
+        fact_meta=fact_meta,
     )
 
 
@@ -383,8 +486,9 @@ def check_rule(
             rule,
             True,
             DecisionOutcome.REVIEW,
-            "Rule reads several object kinds; pairing objects is not supported",
-            {"kinds": kinds},
+            "Rule reads several object kinds directly; read the second kind through a pair "
+            "path such as door.host_wall.thickness, stair.storey.elevation or space.door_count",
+            {"kinds": kinds, "pair_paths": {k: list(v) for k, v in sorted(PAIR_NAMES.items())}},
             fact_paths,
         )
     if not kinds:
@@ -421,20 +525,41 @@ def check_rule(
             fact_paths,
         )
     per_object: list[dict[str, Any]] = []
+    used = {p.split(".")[1] for p in paths if p.startswith(kind + ".")}
     for item in items:
-        facts = {**base_facts, **item.facts(), "fact_units": {**base_units, **item.fact_units()}}
-        applicable, outcome, reason, details = _evaluate(rule.logic_expr, facts)
-        per_object.append(
-            {
-                "object_id": item.object_id,
-                "name": item.name,
-                "entity_handles": list(item.handles),
-                "applicable": applicable,
-                "outcome": outcome.value if outcome is not None else None,
-                "reason": reason,
-                "details": details or {},
+        blocked = item.blocking_pairs(paths)
+        if blocked:
+            pair = blocked[0]
+            applicable, outcome = True, DecisionOutcome.REVIEW
+            reason = f"Pairing {pair.status} ({pair.name}): {pair.reason}"
+            details = {"pairing": {p.name: p.as_dict() for p in blocked}}
+        else:
+            facts = {
+                **base_facts,
+                **item.facts(),
+                "fact_units": {**base_units, **item.fact_units()},
             }
-        )
+            applicable, outcome, reason, details = _evaluate(rule.logic_expr, facts)
+        entry: dict[str, Any] = {
+            "object_id": item.object_id,
+            "name": item.name,
+            "entity_handles": list(item.handles),
+            "applicable": applicable,
+            "outcome": outcome.value if outcome is not None else None,
+            "reason": reason,
+            "details": details or {},
+        }
+        meta = {k: v for k, v in sorted(item.meta.items()) if k in used}
+        if meta:
+            entry["fact_meta"] = meta
+        used_pairs = {
+            name: pair.as_dict()
+            for name, pair in sorted(item.pairs.items())
+            if name in used or used & set(pair.provides)
+        }
+        if used_pairs:
+            entry["pairs"] = used_pairs
+        per_object.append(entry)
     decided = [p for p in per_object if p["applicable"] and p["outcome"] is not None]
     if not decided:
         return CheckResult(rule, False, None, "Rule not applicable", {}, fact_paths)

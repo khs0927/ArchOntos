@@ -72,6 +72,7 @@ def revision_plan(
     extra_space: bool = False,
     shift_handles: bool = False,
     note: str = "",
+    split_bottom_wall: bool = False,
 ) -> bytes:
     """Permit/construction pair builder (mm).
 
@@ -88,8 +89,11 @@ def revision_plan(
         msp.add_line((0, -900), (10, -900), dxfattribs={"layer": "치수"})
     corners = [(0, 0), (6000, 0), (6000, 4000), (0, 4000)]
     walls = list(zip(corners, corners[1:] + corners[:1], strict=True))
-    for a, b in walls[:3]:
-        msp.add_line(a, b, dxfattribs={"layer": "벽"})
+    for i, (a, b) in enumerate(walls[:3]):
+        # split_bottom_wall: the bottom wall keeps its handle for its first half (BREAK)
+        msp.add_line(
+            a, (3000, 0) if i == 0 and split_bottom_wall else b, dxfattribs={"layer": "벽"}
+        )
     msp.add_blockref("D900", (door_x, 0), dxfattribs={"layer": "문"})
     msp.add_lwpolyline(corners, close=True, dxfattribs={"layer": "실"})
     msp.add_text("거실", dxfattribs={"layer": "실명", "insert": (3000, 2000)})
@@ -102,6 +106,8 @@ def revision_plan(
         box = [(20000, 0), (23000, 0), (23000, 2000), (20000, 2000)]
         msp.add_lwpolyline(box, close=True, dxfattribs={"layer": "실"})
         msp.add_text("창고", dxfattribs={"layer": "실명", "insert": (21500, 1000)})
+    if split_bottom_wall:
+        msp.add_line((3000, 0), (6000, 0), dxfattribs={"layer": "벽"})
     if note:
         msp.add_line((0, -500), (6000 + len(note), -500), dxfattribs={"layer": "치수"})
     return _bytes(doc)

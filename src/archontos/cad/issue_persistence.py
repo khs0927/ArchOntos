@@ -46,7 +46,8 @@ _SUPERSEDING_SQL = """
       JOIN cad_revision br ON br.id = d.base_revision_id
      WHERE d.base_revision_id = CAST(:rev AS uuid) AND d.relation = 'lineage'
        AND tr.created_at >= br.created_at
-       AND d.added_count + d.removed_count + d.modified_count > 0
+       AND d.added_count + d.removed_count + d.modified_count + d.split_count
+           + d.merged_count > 0
      ORDER BY d.id
 """
 

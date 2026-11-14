@@ -124,7 +124,8 @@ _RUN_SELECT = """
       JOIN cad_revision br ON br.id = d.base_revision_id
      WHERE d.base_revision_id = c.revision_id AND d.relation = 'lineage'
        AND tr.created_at >= br.created_at
-       AND d.added_count + d.removed_count + d.modified_count > 0
+       AND d.added_count + d.removed_count + d.modified_count + d.split_count
+           + d.merged_count > 0
      ORDER BY d.id) AS stale_by_diff_ids
       FROM cad_check_run c
 """
@@ -215,6 +216,7 @@ class CadCheckRepository:
         facts: dict[str, Any],
         fact_units: dict[str, str],
         rule_version_ids: list[str] | None,
+        model_meta: dict[str, Any] | None = None,
     ) -> tuple[PersistedCheckRun, CheckRun]:
         """Bind rules, run them on ``objects`` and persist (idempotent). May raise
         ``CadCheckInputError``."""
@@ -223,7 +225,7 @@ class CadCheckRepository:
         )
         run = run_checks(
             rules,
-            extract_fact_space(objects),
+            extract_fact_space(objects, model_meta=model_meta),
             jurisdiction=jurisdiction_code,
             reference_date=reference_date,
             land_parcel=land_parcel,
@@ -410,7 +412,8 @@ class CadCheckRepository:
       JOIN cad_revision br ON br.id = d.base_revision_id
      WHERE d.base_revision_id = c.revision_id AND d.relation = 'lineage'
        AND tr.created_at >= br.created_at
-       AND d.added_count + d.removed_count + d.modified_count > 0
+       AND d.added_count + d.removed_count + d.modified_count + d.split_count
+           + d.merged_count > 0
      ORDER BY d.id) AS stale_by_diff_ids
                       FROM cad_check_result x
                       JOIN cad_check_run c ON c.id = x.run_id

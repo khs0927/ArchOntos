@@ -9,6 +9,11 @@ every object as ``added``, ``removed``, ``modified`` or ``unchanged``:
 2. Geometric matching for the rest, within one kind: centroid distance <= ``match_centroid``
    or bbox IoU >= ``match_min_iou``, assigned greedily, best score first, ties by id.
 
+Before handle and geometric matching, straight walls are tested for a **split** (one base wall
+replaced by N >= 2 collinear target walls that together cover it) and a **merge** (N >= 2
+collinear base walls replaced by one target wall that covers them). Such groups become
+``split`` / ``merged`` changes with lineage links instead of ``removed`` + ``added``.
+
 Matched pairs get per-property deltas. Numeric deltas carry the unit (``fact_units``); a delta
 within its tolerance is not a change. ``attach_impact`` then links changes to check results
 and ``transitions`` compares check outcomes between the two revisions.
@@ -24,9 +29,13 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-DIFFER_VERSION = "cad-diff-1.0"
-CHANGE_TYPES = ("added", "removed", "modified", "unchanged")
-_ORDER = {t: i for i, t in enumerate(("removed", "modified", "added", "unchanged"))}
+from archontos.cad import geometry as geo
+
+DIFFER_VERSION = "cad-diff-1.1"  # 1.1: wall split / merge with lineage
+CHANGE_TYPES = ("added", "removed", "modified", "unchanged", "split", "merged")
+_ORDER = {
+    t: i for i, t in enumerate(("removed", "split", "merged", "modified", "added", "unchanged"))
+}
 _RANK = {"PASS": 0, "REVIEW": 1, "FAIL": 2}
 _BOX_PAD = 0.01  # metres: gives line-like objects (walls) a non-zero IoU footprint
 _MAX_CELLS = 256
@@ -51,6 +60,8 @@ _FLOAT_KEYS = (
     "match_centroid",
     "match_min_iou",
     "handle_max_shift",
+    "split_offset",
+    "split_max_gap",
 )
 
 
@@ -62,13 +73,16 @@ class DiffTolerances:
     match_centroid: float = 0.5  # metres
     match_min_iou: float = 0.5
     handle_max_shift: float = 10.0  # metres
+    split_offset: float = 0.01  # metres: max distance of a piece from the whole wall's axis
+    split_max_gap: float = 0.05  # metres: max uncovered gap at the ends / between pieces
     match_by_handle: bool = True
+    detect_split: bool = True
     per_property: dict[str, float] = field(default_factory=dict)  # "door.width" or "width"
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None) -> DiffTolerances:
         data = dict(data or {})
-        unknown = set(data) - {*_FLOAT_KEYS, "match_by_handle", "per_property"}
+        unknown = set(data) - {*_FLOAT_KEYS, "match_by_handle", "detect_split", "per_property"}
         if unknown:
             raise DiffInputError(f"unknown tolerance(s): {sorted(unknown)}")
         kwargs: dict[str, Any] = {
@@ -80,6 +94,10 @@ class DiffTolerances:
             if not isinstance(data["match_by_handle"], bool):
                 raise DiffInputError("match_by_handle must be a boolean")
             kwargs["match_by_handle"] = data["match_by_handle"]
+        if "detect_split" in data:
+            if not isinstance(data["detect_split"], bool):
+                raise DiffInputError("detect_split must be a boolean")
+            kwargs["detect_split"] = data["detect_split"]
         per = data.get("per_property") or {}
         if not isinstance(per, Mapping):
             raise DiffInputError("per_property must be an object")
@@ -92,6 +110,7 @@ class DiffTolerances:
         return {
             **{k: getattr(self, k) for k in _FLOAT_KEYS},
             "match_by_handle": self.match_by_handle,
+            "detect_split": self.detect_split,
             "per_property": dict(sorted(self.per_property.items())),
         }
 
@@ -288,6 +307,117 @@ def _match_geometric(
     return pairs
 
 
+# --- wall split / merge ---------------------------------------------------------------------
+
+
+def _pieces_cover(
+    whole: geo.Segment, pieces: list[tuple[str, geo.Segment]], tol: DiffTolerances
+) -> list[tuple[str, float, float]] | None:
+    """Pieces (id, start, end along ``whole``) when they are collinear with ``whole``, lie
+    within it and cover it with gaps <= ``split_max_gap``; else None."""
+    ux, uy = whole[1][0] - whole[0][0], whole[1][1] - whole[0][1]
+    length = math.hypot(ux, uy)
+    if length <= tol.split_max_gap:
+        return None
+    ux, uy = ux / length, uy / length
+    ax, ay = whole[0]
+    spans: list[tuple[str, float, float]] = []
+    for pid, seg in pieces:
+        if not geo.parallel(whole, seg):
+            return None
+        ts = []
+        for px, py in seg:
+            if abs((px - ax) * uy - (py - ay) * ux) > tol.split_offset:
+                return None
+            ts.append((px - ax) * ux + (py - ay) * uy)
+        lo, hi = min(ts), max(ts)
+        if lo < -tol.split_max_gap or hi > length + tol.split_max_gap:
+            return None
+        spans.append((pid, round(lo, 9), round(hi, 9)))
+    spans.sort(key=lambda s: (s[1], s[2], s[0]))
+    if spans[0][1] > tol.split_max_gap or spans[-1][2] < length - tol.split_max_gap:
+        return None
+    for (_a, _lo, a_hi), (_b, b_lo, _hi) in zip(spans, spans[1:], strict=False):
+        if b_lo - a_hi > tol.split_max_gap or a_hi - b_lo > max(tol.split_offset, 0.01):
+            return None  # an uncovered gap, or pieces overlapping each other
+    return spans
+
+
+def _collinear_candidates(
+    whole: geo.Segment, axes: dict[str, geo.Segment], used: set[str], tol: DiffTolerances
+) -> list[tuple[str, geo.Segment]]:
+    """Free walls on the same line as ``whole`` that overlap its extent."""
+    ux, uy = whole[1][0] - whole[0][0], whole[1][1] - whole[0][1]
+    length = math.hypot(ux, uy)
+    ux, uy = ux / length, uy / length
+    ax, ay = whole[0]
+    out = []
+    for oid in sorted(axes):
+        if oid in used:
+            continue
+        seg = axes[oid]
+        if not geo.parallel(whole, seg):
+            continue
+        if any(abs((px - ax) * uy - (py - ay) * ux) > tol.split_offset for px, py in seg):
+            continue
+        ts = [(px - ax) * ux + (py - ay) * uy for px, py in seg]
+        if max(ts) <= tol.split_max_gap or min(ts) >= length - tol.split_max_gap:
+            continue  # merely touches an end
+        out.append((oid, seg))
+    return out
+
+
+def match_split_merge(
+    base: list[dict[str, Any]], target: list[dict[str, Any]], tol: DiffTolerances
+) -> list[dict[str, Any]]:
+    """Wall split (1 -> N) and merge (N -> 1) groups among unmatched straight walls.
+
+    Deterministic: base walls are tried in id order for splits, then target walls in id order
+    for merges; a wall joins at most one group. Each group is
+    ``{"type", "base_ids", "target_ids", "spans", "length"}`` with spans along the whole wall.
+    """
+    axes_b = {
+        str(o["id"]): a
+        for o in base
+        if o["kind"] == "wall" and (a := geo.straight_axis(o.get("geometry"))) is not None
+    }
+    axes_t = {
+        str(o["id"]): a
+        for o in target
+        if o["kind"] == "wall" and (a := geo.straight_axis(o.get("geometry"))) is not None
+    }
+    used_b: set[str] = set()
+    used_t: set[str] = set()
+    groups: list[dict[str, Any]] = []
+    for kind, wholes, parts, used_w, used_p in (
+        ("split", axes_b, axes_t, used_b, used_t),
+        ("merged", axes_t, axes_b, used_t, used_b),
+    ):
+        for wid in sorted(wholes):
+            if wid in used_w:
+                continue
+            whole = wholes[wid]
+            cands = _collinear_candidates(whole, parts, used_p, tol)
+            if len(cands) < 2:
+                continue
+            spans = _pieces_cover(whole, cands, tol)
+            if spans is None:
+                continue
+            used_w.add(wid)
+            used_p.update(pid for pid, _lo, _hi in spans)
+            ids = sorted(pid for pid, _lo, _hi in spans)  # pieces keep spatial order
+            groups.append(
+                {
+                    "type": kind,
+                    "base_ids": [wid] if kind == "split" else ids,
+                    "target_ids": ids if kind == "split" else [wid],
+                    "spans": spans,
+                    "length": round(math.dist(*whole), 9),
+                }
+            )
+    return groups
+
+
 # --- deltas -----------------------------------------------------------------------------
 
 
@@ -422,10 +552,12 @@ def _change(
     method: str | None = None,
     score: float | None = None,
     deltas: list[dict[str, Any]] | None = None,
+    lineage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ref = target or base
     assert ref is not None  # noqa: S101
     return {
+        "lineage": lineage or {},
         "change_type": change_type,
         "kind": ref["kind"],
         "base_object_id": base["id"] if base else None,
@@ -456,6 +588,19 @@ def diff_objects(
         kt = [o for o in target if o["kind"] == kind]
         by_id_kt = {o["id"]: o for o in kt}
         pairs: Pairs = _match_by_content(kb, kt)
+        lineage_b: set[str] = set()
+        lineage_t: set[str] = set()
+        if tol.detect_split and kind == "wall":
+            taken = {t for t, _ in pairs.values()}
+            groups = match_split_merge(
+                [o for o in kb if o["id"] not in pairs],
+                [o for o in kt if o["id"] not in taken],
+                tol,
+            )
+            for grp in groups:
+                lineage_b.update(grp["base_ids"])
+                lineage_t.update(grp["target_ids"])
+                changes += _lineage_changes(grp, by_b, by_t)
         # identical content: "handle" when the DXF handles agree too, else "content"
         methods = {
             bid: "handle"
@@ -463,25 +608,25 @@ def diff_objects(
             else "content"
             for bid, (tid, _s) in pairs.items()
         }
-        taken = {t for t, _ in pairs.values()}
+        taken = {t for t, _ in pairs.values()} | lineage_t
         if tol.match_by_handle:
             hp = _match_by_handle(
-                [o for o in kb if o["id"] not in pairs],
+                [o for o in kb if o["id"] not in pairs and o["id"] not in lineage_b],
                 [o for o in kt if o["id"] not in taken],
                 shapes,
                 tol,
             )
             pairs.update(hp)
             methods.update(dict.fromkeys(hp, "handle"))
-            taken = {t for t, _ in pairs.values()}
-        geo = _match_geometric(
-            [o for o in kb if o["id"] not in pairs],
+            taken = {t for t, _ in pairs.values()} | lineage_t
+        geom = _match_geometric(
+            [o for o in kb if o["id"] not in pairs and o["id"] not in lineage_b],
             [o for o in kt if o["id"] not in taken],
             shapes,
             tol,
         )
-        pairs.update(geo)
-        methods.update(dict.fromkeys(geo, "geometry"))
+        pairs.update(geom)
+        methods.update(dict.fromkeys(geom, "geometry"))
         matched_t = {t for t, _ in pairs.values()}
         for bid, (tid, score) in pairs.items():
             b, t = by_b[bid], by_t[tid]
@@ -491,8 +636,16 @@ def diff_objects(
                 deltas = property_deltas(b, t, tol) + geometry_deltas(shapes[bid], shapes[tid], tol)
             ctype = "modified" if deltas else "unchanged"
             changes.append(_change(ctype, b, t, method=methods[bid], score=score, deltas=deltas))
-        changes += [_change("removed", o, None) for o in kb if o["id"] not in pairs]
-        changes += [_change("added", None, o) for o in kt if o["id"] not in matched_t]
+        changes += [
+            _change("removed", o, None)
+            for o in kb
+            if o["id"] not in pairs and o["id"] not in lineage_b
+        ]
+        changes += [
+            _change("added", None, o)
+            for o in kt
+            if o["id"] not in matched_t and o["id"] not in lineage_t
+        ]
     changes.sort(
         key=lambda c: (
             c["kind"],
@@ -502,6 +655,33 @@ def diff_objects(
         )
     )
     return changes
+
+
+def _lineage_changes(
+    grp: dict[str, Any], by_b: dict[str, dict[str, Any]], by_t: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """One change row per (whole, piece) link of a split / merge group."""
+    length = grp["length"]
+    covered = round(sum(hi - lo for _pid, lo, hi in grp["spans"]), 9)
+    lineage = {
+        "group_type": grp["type"],
+        "base_object_ids": list(grp["base_ids"]),
+        "target_object_ids": list(grp["target_ids"]),
+        "whole_length": length,
+        "covered_length": covered,
+        "pieces": [{"object_id": pid, "start": lo, "end": hi} for pid, lo, hi in grp["spans"]],
+    }
+    out = []
+    for pid, lo, hi in grp["spans"]:
+        if grp["type"] == "split":
+            base, target = by_b[grp["base_ids"][0]], by_t[pid]
+        else:
+            base, target = by_b[pid], by_t[grp["target_ids"][0]]
+        score = round((hi - lo) / length, 6) if length > 0 else None
+        out.append(
+            _change(grp["type"], base, target, method="collinear", score=score, lineage=lineage)
+        )
+    return out
 
 
 def change_id(diff_id: str, change: Mapping[str, Any], namespace: uuid.UUID) -> str:
@@ -552,7 +732,7 @@ def _affects(change: dict[str, Any], result: Mapping[str, Any], side: str) -> st
                 return "fact"
             if p.startswith("drawing.") and props and _reads_kind(p, change["kind"]):
                 return "fact"
-    elif change["change_type"] in ("added", "removed") and any(
+    elif change["change_type"] in ("added", "removed", "split", "merged") and any(
         _reads_kind(p, change["kind"]) for p in paths
     ):
         return "fact"

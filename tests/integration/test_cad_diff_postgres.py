@@ -165,3 +165,32 @@ async def test_revision_diff_impact_transitions_and_stale(client, monkeypatch):
     assert (await http.get(f"/v1/cad/diffs/{diff['id']}")).status_code == 404
     assert (await http.get(changes_url)).status_code == 404
     assert (await http.post("/v1/cad/diffs", json=body)).status_code == 404
+
+
+async def test_wall_split_and_merge_are_persisted_with_lineage(client):
+    http, factory, _store = client
+    whole = await _upload(http, revision_plan(), "A-401")
+    broken = await _upload(http, revision_plan(split_bottom_wall=True), "A-401")
+    res = await http.post(
+        "/v1/cad/diffs", json={"base_revision_id": whole, "target_revision_id": broken}
+    )
+    assert res.status_code == 201, res.text
+    diff = res.json()["diff"]
+    assert diff["split_count"] == 2 and diff["merged_count"] == 0
+    assert diff["added_count"] == 0 and diff["removed_count"] == 0
+    assert diff["summary"]["split"] == 2
+    url = f"/v1/cad/diffs/{diff['id']}/changes"
+    split = (await http.get(url, params={"change_type": "split"})).json()["items"]
+    assert len(split) == 2 and {c["match_method"] for c in split} == {"collinear"}
+    (base_id,) = {c["base_object_id"] for c in split}
+    lineage = split[0]["lineage"]
+    assert lineage["group_type"] == "split" and lineage["base_object_ids"] == [base_id]
+    assert sorted(lineage["target_object_ids"]) == sorted(c["target_object_id"] for c in split)
+    unchanged = (await http.get(url, params={"change_type": "unchanged"})).json()["items"]
+    assert all(c["lineage"] == {} for c in unchanged)
+
+    back = await http.post(
+        "/v1/cad/diffs", json={"base_revision_id": broken, "target_revision_id": whole}
+    )
+    assert back.status_code == 201 and back.json()["diff"]["merged_count"] == 2
+    assert await count_rows(factory, "cad_object_change", "change_type = 'merged'") == 2

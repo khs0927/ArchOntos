@@ -43,7 +43,7 @@
 - [x] Binding: active rules with approved basis, effective on the reference date, in the jurisdiction; land-parcel facts
 - [x] Migration 015: cad_check_run / cad_check_result (append-only, RLS); outbox topic `cad.checks-completed`
 - [x] `/v1/cad/revisions/{id}/checks` run and results API with filters and cursors
-- [ ] Object pairing (door/wall, stair/storey), storey and building facts, clear-width geometry. See docs/MVP2-CAD-CHECKS.md
+- [ ] Storey and building facts from DXF (object pairing and clear widths are done). See docs/MVP2-CAD-CHECKS.md
 
 ## MVP-3: revision diff (in progress)
 

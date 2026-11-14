@@ -336,6 +336,10 @@ def object_properties(kind: str, element: ModelElement) -> dict[str, Any]:
         props["name"] = label.strip()
     if element.storey:
         props["storey"] = element.storey
+    host = element.attributes.get("host_ref")
+    if kind in ("door", "window") and host:
+        # IfcRelFillsElement/IfcRelVoidsElement host (str), or a list when ambiguous.
+        props["host_ref"] = host if isinstance(host, str) else sorted(str(h) for h in host)
     return props
 
 
